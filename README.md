@@ -108,7 +108,15 @@ python test_run.py
 python scanner.py
 ```
 
-Typical schedule: run after the TSX close (or on a cron / GitHub Action) so daily bars are settled.
+Typical schedule: run after the TSX close (or via GitHub Actions) so daily bars are settled.
+
+### GitHub Actions (daily scan)
+
+Workflow: [`.github/workflows/daily_scan.yml`](.github/workflows/daily_scan.yml)
+
+- Runs **Mon–Fri at 20:15 UTC** (≈ 4:15 PM EDT), plus manual **Run workflow**
+- Add repository secrets: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
+- Commits `signals.db` after each run so cooldowns persist between CI jobs
 
 ---
 

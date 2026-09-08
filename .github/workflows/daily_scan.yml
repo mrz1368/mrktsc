@@ -1,0 +1,47 @@
+name: TSX Daily Quant Scan
+
+on:
+  schedule:
+    # 20:15 UTC ≈ 16:15 EDT — after TSX daily bars settle
+    - cron: "15 20 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Market Scanner
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PORTFOLIO_RISK_CAD: "20.0"
+          COOLDOWN_DAYS: "5"
+          SIGNALS_DB: signals.db
+        run: python scanner.py
+
+      - name: Persist Database State
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # signals.db is gitignored locally; force-add so cooldown survives across runs
+          git add -f signals.db
+          if git diff --staged --quiet; then
+            echo "No cooldown DB changes to commit."
+          else
+            git commit -m "chore: update SQLite cooldown state"
+            git push
+          fi
