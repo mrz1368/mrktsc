@@ -1,0 +1,9 @@
+line-length = 100
+exclude = ["venv", ".venv", ".ruff_cache"]
+
+[lint]
+select = ["E", "F", "I", "BLE", "DTZ"]
+
+[lint.per-file-ignores]
+"telegram_notify.py" = ["E501"]
+"test_run.py" = ["E501"]
