@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import yfinance as yf
 
 from config import Config, load_config
+from dashboard import generate_dashboard
 from db import (
     ALERT_BUY,
     ALERT_INVERSE,
@@ -341,6 +342,7 @@ def scan_market() -> None:
     alerted_sectors: set[str] = set()
     alerted_vehicles: set[str] = set()
     setups_dispatched = 0
+    dashboard_cards: list[dict] = []
 
     print(f"Current Market Regime: {market_regime}")
     print(
@@ -410,6 +412,30 @@ def scan_market() -> None:
                     and fund.passes_fundamentals
                     and news.headlines_clean
                     and not is_extreme_greed
+                )
+
+                category = "neutral"
+                if is_valid_buy or is_valid_inverse:
+                    category = "setup"
+                elif is_watch:
+                    category = "watch"
+                dashboard_cards.append(
+                    {
+                        "ticker": ticker,
+                        "sector": sector,
+                        "close": bar.close,
+                        "category": category,
+                        "adx": bar.adx,
+                        "rvol": flags.rvol,
+                        "sma50_slope": bar.sma_50_slope,
+                        "rs_vs_xiu": flags.rs_vs_xiu,
+                        "pullback_pct": flags.pullback_pct,
+                        "debt_safe": fund.debt_safe,
+                        "fcf_positive": fund.fcf_positive,
+                        "earnings_conflict": fund.earnings_conflict,
+                        "headlines_clean": news.headlines_clean,
+                        "fund_notes": fund.notes,
+                    }
                 )
 
                 if is_valid_buy:
@@ -501,6 +527,16 @@ def scan_market() -> None:
                 ),
             )
             print(f" -> [IDLE CASH] No setups. Remain 100% in {CASH_ETF}.")
+
+        generate_dashboard(
+            cards=dashboard_cards,
+            regime=market_regime,
+            vix_val=vix_close,
+            vix_mult=vix_mult,
+            sentiment_score=macro.score,
+            sentiment_rating=macro.rating,
+            cash_etf=CASH_ETF,
+        )
 
     finally:
         conn.close()

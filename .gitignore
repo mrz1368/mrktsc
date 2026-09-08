@@ -1,5 +1,6 @@
 .env
 signals.db
+dist/
 venv/
 .venv/
 __pycache__/

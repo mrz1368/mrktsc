@@ -114,9 +114,10 @@ Typical schedule: run after the TSX close (or via GitHub Actions) so daily bars 
 
 Workflow: [`.github/workflows/daily_scan.yml`](.github/workflows/daily_scan.yml)
 
-- Runs **Mon–Fri at 21:15 UTC** (4:15 PM EST / 5:15 PM EDT), plus manual **Run workflow**
+- Runs **Mon–Fri at 16:15 America/Toronto** (4:15 PM ET), plus manual **Run workflow**
 - Add repository secrets: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
 - Caches `signals.db` between CI jobs so cooldowns persist (does not commit the DB to `main`)
+- Writes `dist/index.html` and deploys it to **GitHub Pages** (Settings → Pages → Source: GitHub Actions)
 
 ---
 

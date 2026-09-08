@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TSX Quantitative Radar</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            cardBg: '#1e293b',
+            darkBg: '#0f172a',
+            borderCol: '#334155'
+          }
+        }
+      }
+    }
+    function filterCards(category) {
+      document.querySelectorAll('.ticker-card').forEach(el => {
+        if (category === 'all' || el.dataset.category === category) {
+          el.style.display = 'block';
+        } else {
+          el.style.display = 'none';
+        }
+      });
+      document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.remove('bg-blue-600', 'text-white');
+        btn.classList.add('bg-slate-800', 'text-slate-300');
+      });
+      const activeBtn = document.getElementById(`btn-${category}`);
+      if (activeBtn) {
+        activeBtn.classList.add('bg-blue-600', 'text-white');
+        activeBtn.classList.remove('bg-slate-800', 'text-slate-300');
+      }
+    }
+  </script>
+</head>
+<body class="bg-darkBg text-slate-100 min-h-screen p-4 md:p-8 font-sans antialiased">
+  <div class="max-w-7xl mx-auto space-y-6">
+
+    <!-- Top Macro & Regime Banner -->
+    <header class="bg-cardBg border border-borderCol rounded-xl p-5 shadow-lg flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div>
+        <h1 class="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
+          TSX Quantitative Radar
+          <span class="text-xs px-2.5 py-1 rounded-full font-semibold {{ 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' if regime == 'BULL' else 'bg-rose-500/20 text-rose-400 border border-rose-500/40' }}">
+            {{ regime }} REGIME
+          </span>
+        </h1>
+        <p class="text-xs text-slate-400 mt-1">
+          Benchmark: <span class="font-mono text-slate-200">XIU.TO</span> | Sweep Vehicle: <span class="font-mono text-slate-200">{{ cash_etf }}</span> | Generated: <span class="text-slate-200">{{ generated_at }}</span>
+        </p>
+      </div>
+      <div class="flex flex-wrap items-center gap-3 text-xs">
+        <div class="bg-slate-900/80 border border-borderCol px-3.5 py-2 rounded-lg">
+          <span class="text-slate-400 block">VIX Volatility</span>
+          <span class="font-mono font-bold text-sm text-slate-100">{{ vix_val }} <span class="text-xs font-normal text-slate-400">({{ vix_mult }}x Risk)</span></span>
+        </div>
+        <div class="bg-slate-900/80 border border-borderCol px-3.5 py-2 rounded-lg">
+          <span class="text-slate-400 block">Fear &amp; Greed</span>
+          <span class="font-mono font-bold text-sm text-slate-100">{{ sentiment_score }}/100 <span class="text-xs font-normal capitalize text-slate-400">({{ sentiment_rating }})</span></span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Filter Buttons -->
+    <div class="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+      <button id="btn-all" onclick="filterCards('all')" class="filter-btn px-3.5 py-1.5 rounded-lg font-medium bg-blue-600 text-white transition">All Watchlist ({{ cards|length }})</button>
+      <button id="btn-setup" onclick="filterCards('setup')" class="filter-btn px-3.5 py-1.5 rounded-lg font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 transition">Actionable Setups</button>
+      <button id="btn-watch" onclick="filterCards('watch')" class="filter-btn px-3.5 py-1.5 rounded-lg font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 transition">Watchlist Radar</button>
+      <button id="btn-neutral" onclick="filterCards('neutral')" class="filter-btn px-3.5 py-1.5 rounded-lg font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 transition">Filtered Out</button>
+    </div>
+
+    <!-- Cards Grid -->
+    <main class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+      {% for card in cards %}
+      <div class="ticker-card bg-cardBg border border-borderCol rounded-xl p-5 shadow-sm space-y-4 hover:border-slate-600 transition" data-category="{{ card.category }}">
+        
+        <!-- Card Header -->
+        <div class="flex justify-between items-start">
+          <div>
+            <div class="flex items-center gap-2">
+              <h2 class="text-lg font-bold text-white font-mono">{{ card.ticker }}</h2>
+              <span class="text-[10px] uppercase font-semibold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">{{ card.sector }}</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-0.5">${{ "%.2f"|format(card.close) }} CAD</p>
+          </div>
+          <div>
+            {% if card.category == 'setup' %}
+              <span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">ACTIONABLE SETUP</span>
+            {% elif card.category == 'watch' %}
+              <span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/40">WATCH RADAR</span>
+            {% else %}
+              <span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-800 text-slate-400 border border-slate-700">FILTERED</span>
+            {% endif %}
+          </div>
+        </div>
+
+        <!-- Technical Diagnostics -->
+        <div class="space-y-1.5 text-xs bg-slate-900/60 p-3 rounded-lg border border-slate-800">
+          <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Technical Gates</div>
+          <div class="flex justify-between"><span>Trend (ADX):</span><span class="font-mono">{{ '✅' if card.adx >= 25 else '❌' }} {{ "%.1f"|format(card.adx) }}</span></div>
+          <div class="flex justify-between"><span>Relative Volume (RVOL):</span><span class="font-mono">{{ '✅' if card.rvol >= 1.0 else '❌' }} {{ "%.2f"|format(card.rvol) }}x</span></div>
+          <div class="flex justify-between"><span>50 SMA Slope:</span><span class="font-mono">{{ '✅' if card.sma50_slope > 0 else '❌' }} {{ "%+.2f"|format(card.sma50_slope) }}</span></div>
+          <div class="flex justify-between"><span>RS vs XIU.TO:</span><span class="font-mono">{{ '✅' if card.rs_vs_xiu > 0 else '❌' }} {{ "%+.1f"|format(card.rs_vs_xiu) }}%</span></div>
+          <div class="flex justify-between"><span>Pullback to 50 SMA:</span><span class="font-mono">{{ "%.2f"|format(card.pullback_pct) }}%</span></div>
+        </div>
+
+        <!-- Fundamental Diagnostics -->
+        <div class="space-y-1.5 text-xs bg-slate-900/60 p-3 rounded-lg border border-slate-800">
+          <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Fundamental &amp; Risk Gates</div>
+          <div class="flex justify-between"><span>Debt Service:</span><span class="font-mono">{{ '✅ Safe' if card.debt_safe else '❌ Failed' }}</span></div>
+          <div class="flex justify-between"><span>Cash Flow:</span><span class="font-mono">{{ '✅ Positive' if card.fcf_positive else '❌ Negative' }}</span></div>
+          <div class="flex justify-between"><span>Earnings Blackout:</span><span class="font-mono">{{ '❌ Warning' if card.earnings_conflict else '✅ Clear' }}</span></div>
+          <div class="flex justify-between"><span>News Velocity:</span><span class="font-mono">{{ '✅ Clear' if card.headlines_clean else '❌ Flagged' }}</span></div>
+        </div>
+
+        <!-- Health Note -->
+        <p class="text-[11px] text-slate-400 italic truncate" title="{{ card.fund_notes }}">Note: {{ card.fund_notes }}</p>
+
+      </div>
+      {% endfor %}
+    </main>
+  </div>
+</body>
+</html>

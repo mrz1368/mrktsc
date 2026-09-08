@@ -2,8 +2,8 @@ name: TSX Daily Quant Scan
 
 on:
   schedule:
-    # 21:15 UTC = 16:15 EST / 17:15 EDT — after TSX close in both offsets
-    - cron: "15 21 * * 1-5"
+    # 16:15 America/Toronto — 15 min after TSX close (EDT/EST)
+    - cron: "15 16 * * 1-5"
       timezone: 'America/Toronto'
   workflow_dispatch:
 
@@ -16,6 +16,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
@@ -37,7 +42,7 @@ jobs:
       - name: Install Dependencies
         run: pip install -r requirements.txt
 
-      - name: Run Market Scanner
+      - name: Run Market Scanner & Generate Dashboard
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -45,3 +50,15 @@ jobs:
           COOLDOWN_DAYS: "5"
           SIGNALS_DB: signals.db
         run: python scanner.py
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
