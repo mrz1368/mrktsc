@@ -1,7 +1,6 @@
 .env
 venv/
 .venv/
-signals.db
 __pycache__/
 *.pyc
 .Python

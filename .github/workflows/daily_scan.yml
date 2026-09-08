@@ -2,8 +2,8 @@ name: TSX Daily Quant Scan
 
 on:
   schedule:
-    # 20:15 UTC ≈ 16:15 EDT — after TSX daily bars settle
-    - cron: "15 20 * * 1-5"
+    # 21:15 UTC = 16:15 EST / 17:15 EDT — after TSX close in both offsets
+    - cron: "15 21 * * 1-5"
   workflow_dispatch:
 
 jobs:
