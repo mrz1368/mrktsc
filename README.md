@@ -116,7 +116,7 @@ Workflow: [`.github/workflows/daily_scan.yml`](.github/workflows/daily_scan.yml)
 
 - Runs **Mon–Fri at 21:15 UTC** (4:15 PM EST / 5:15 PM EDT), plus manual **Run workflow**
 - Add repository secrets: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
-- Commits `signals.db` after each run so cooldowns persist between CI jobs
+- Caches `signals.db` between CI jobs so cooldowns persist (does not commit the DB to `main`)
 
 ---
 

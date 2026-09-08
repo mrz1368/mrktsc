@@ -15,20 +15,18 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Restore cooldown DB
-        run: |
-          git fetch origin "${GITHUB_REF_NAME}"
-          if git cat-file -e "origin/${GITHUB_REF_NAME}:signals.db" 2>/dev/null; then
-            git checkout "origin/${GITHUB_REF_NAME}" -- signals.db
-            echo "Restored signals.db from origin/${GITHUB_REF_NAME}"
-          else
-            echo "No signals.db on origin/${GITHUB_REF_NAME} yet"
-          fi
+        uses: actions/cache@v4
+        with:
+          path: signals.db
+          key: signals-db-${{ github.run_id }}
+          restore-keys: |
+            signals-db-
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -47,27 +45,3 @@ jobs:
           COOLDOWN_DAYS: "5"
           SIGNALS_DB: signals.db
         run: python scanner.py
-
-      - name: Persist Database State
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          if [ ! -f signals.db ]; then
-            echo "No signals.db to persist."
-            exit 0
-          fi
-
-          cp signals.db "${RUNNER_TEMP}/signals.db"
-          git fetch origin "${GITHUB_REF_NAME}"
-          git reset --hard "origin/${GITHUB_REF_NAME}"
-          cp "${RUNNER_TEMP}/signals.db" signals.db
-
-          git add -f signals.db
-          if git diff --staged --quiet; then
-            echo "No cooldown DB changes to commit."
-          else
-            git commit -m "chore: update SQLite cooldown state"
-            git push origin "HEAD:${GITHUB_REF_NAME}"
-          fi
