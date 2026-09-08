@@ -36,6 +36,19 @@
         activeBtn.classList.remove('bg-slate-800', 'text-slate-300');
       }
     }
+    function toggleHelpModal(show) {
+      const modal = document.getElementById('helpModal');
+      if (show) {
+        modal.classList.remove('hidden');
+        document.body.classList.add('overflow-hidden');
+      } else {
+        modal.classList.add('hidden');
+        document.body.classList.remove('overflow-hidden');
+      }
+    }
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') toggleHelpModal(false);
+    });
   </script>
 </head>
 <body class="bg-darkBg text-slate-100 min-h-screen p-4 md:p-8 font-sans antialiased">
@@ -55,6 +68,12 @@
         </p>
       </div>
       <div class="flex flex-wrap items-center gap-3 text-xs">
+        <button onclick="toggleHelpModal(true)" class="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-borderCol px-3.5 py-2 rounded-lg transition font-medium">
+          <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          Methodology Guide
+        </button>
         <div class="bg-slate-900/80 border border-borderCol px-3.5 py-2 rounded-lg">
           <span class="text-slate-400 block">VIX Volatility</span>
           <span class="font-mono font-bold text-sm text-slate-100">{{ vix_val }} <span class="text-xs font-normal text-slate-400">({{ vix_mult }}x Risk)</span></span>
@@ -136,6 +155,93 @@
       </div>
       {% endfor %}
     </main>
+  </div>
+
+  <!-- Methodology Help Modal -->
+  <div id="helpModal" class="hidden fixed inset-0 z-50 overflow-y-auto bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-cardBg border border-borderCol rounded-2xl max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+
+      <!-- Modal Header -->
+      <div class="p-5 border-b border-borderCol flex justify-between items-center bg-slate-900/60">
+        <h3 class="text-lg font-bold text-white flex items-center gap-2">
+          <span class="text-blue-400">🛡️</span> Quantitative Validation Reference
+        </h3>
+        <button onclick="toggleHelpModal(false)" class="text-slate-400 hover:text-white p-1 text-xl leading-none">&times;</button>
+      </div>
+
+      <!-- Modal Body -->
+      <div class="p-6 overflow-y-auto space-y-6 text-xs text-slate-300">
+
+        <!-- Technical Section -->
+        <section class="space-y-3">
+          <h4 class="text-sm font-semibold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-700 pb-1">
+            Technical Confluence Gates
+          </h4>
+          <ul class="space-y-2.5">
+            <li>
+              <strong class="text-slate-100">Trend Strength (ADX &ge; 25.0):</strong>
+              Calculated using Wilder's RMA. Ensures the stock is in a definitive directional trend, filtering out horizontal chop and consolidation drift.
+            </li>
+            <li>
+              <strong class="text-slate-100">Institutional Footprint (RVOL &ge; 1.0x):</strong>
+              Relative volume versus the 20-day volume SMA. Confirms that professional money is defending the pullback.
+            </li>
+            <li>
+              <strong class="text-slate-100">Rising Support (50 SMA Slope > 0):</strong>
+              Evaluates the 5-day trajectory of the 50-day moving average to ensure price is supported by an ascending trendline.
+            </li>
+            <li>
+              <strong class="text-slate-100">Market Outperformance (RS vs XIU.TO > 0%):</strong>
+              63-day Rate of Change comparison against the TSX 60 benchmark, ensuring capital flows only into market leaders.
+            </li>
+            <li>
+              <strong class="text-slate-100">Entry Location (Pullback &le; 2.5%):</strong>
+              Prevents chasing extended breakouts. Entries are only valid when price is within 2.5% of dynamic 50-day support.
+            </li>
+            <li>
+              <strong class="text-slate-100">Candle Confirmation:</strong>
+              Requires a bullish close finishing in the upper 50% of the day's total range, verifying active buyer defense.
+            </li>
+          </ul>
+        </section>
+
+        <!-- Fundamental Section -->
+        <section class="space-y-3">
+          <h4 class="text-sm font-semibold text-blue-400 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-700 pb-1">
+            Fundamental &amp; Risk Safety Gates
+          </h4>
+          <ul class="space-y-2.5">
+            <li>
+              <strong class="text-slate-100">Debt Service Coverage (&ge; 2.0x):</strong>
+              Operating income (EBITDA) must cover interest obligations by at least 2.0x. Financial institutions (banks/insurers) automatically bypass this metric.
+            </li>
+            <li>
+              <strong class="text-slate-100">Free Cash Flow (FCF > 0):</strong>
+              Trailing Twelve Month (TTM) cash flow must be positive to ensure business solvency without continuous capital dilution.
+            </li>
+            <li>
+              <strong class="text-slate-100">Earnings Blackout (-2 to +7 Days):</strong>
+              Hard blocks setups during reporting weeks to eliminate gap risk.
+            </li>
+            <li>
+              <strong class="text-slate-100">Headline Velocity (7-Day NLP Filter):</strong>
+              Scans news for litigation, short-seller alerts, regulatory probes, and sudden management resignations.
+            </li>
+            <li>
+              <strong class="text-slate-100">Macro Sentiment &amp; Volatility (VIX Sizing):</strong>
+              Blocks long positions during Extreme Greed (>75) and scales position size inversely with the CBOE VIX index.
+            </li>
+          </ul>
+        </section>
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="p-4 border-t border-borderCol bg-slate-900/60 flex justify-end">
+        <button onclick="toggleHelpModal(false)" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-medium text-xs transition">
+          Close Reference
+        </button>
+      </div>
+    </div>
   </div>
 </body>
 </html>
