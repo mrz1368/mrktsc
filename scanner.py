@@ -101,6 +101,56 @@ def _build_alert_context(
     )
 
 
+def _dashboard_card(
+    ticker: str,
+    sector: str,
+    bar: BarSnapshot,
+    flags: SetupFlags,
+    fund: FundamentalsResult,
+    news: NewsVelocityResult,
+    category: str,
+    extra_note: str = "",
+) -> dict:
+    notes = fund.notes
+    if extra_note:
+        notes = f"{extra_note} {notes}".strip()
+    return {
+        "ticker": ticker,
+        "sector": sector,
+        "close": bar.close,
+        "category": category,
+        "adx": bar.adx,
+        "rvol": flags.rvol,
+        "sma50_slope": bar.sma_50_slope,
+        "rs_vs_xiu": flags.rs_vs_xiu,
+        "pullback_pct": flags.pullback_pct,
+        "debt_safe": fund.debt_safe,
+        "fcf_positive": fund.fcf_positive,
+        "earnings_conflict": fund.earnings_conflict,
+        "headlines_clean": news.headlines_clean,
+        "fund_notes": notes,
+    }
+
+
+def _skipped_dashboard_card(ticker: str, reason: str, close: float = 0.0) -> dict:
+    return {
+        "ticker": ticker,
+        "sector": ticker_sector(ticker),
+        "close": close,
+        "category": "neutral",
+        "adx": 0.0,
+        "rvol": 0.0,
+        "sma50_slope": 0.0,
+        "rs_vs_xiu": 0.0,
+        "pullback_pct": 0.0,
+        "debt_safe": False,
+        "fcf_positive": False,
+        "earnings_conflict": False,
+        "headlines_clean": True,
+        "fund_notes": reason,
+    }
+
+
 def _reject_fund_or_news(
     ticker: str,
     fund: FundamentalsResult,
@@ -366,18 +416,33 @@ def scan_market() -> None:
             try:
                 ticker_obj = yf.Ticker(ticker)
                 df = ticker_obj.history(period="18mo", interval="1d")
-                if df.empty or len(df) < 200:
+                if df.empty:
+                    reason = "No price history from Yahoo."
+                    print(f" -> [SKIP] {ticker}: {reason}")
+                    dashboard_cards.append(_skipped_dashboard_card(ticker, reason))
+                    continue
+                if len(df) < 200:
+                    reason = f"Insufficient history ({len(df)} bars, need 200)."
+                    print(f" -> [SKIP] {ticker}: {reason}")
+                    close = float(df["Close"].iloc[-1]) if "Close" in df.columns else 0.0
+                    dashboard_cards.append(
+                        _skipped_dashboard_card(ticker, reason, close=close)
+                    )
                     continue
 
                 df = add_technical_indicators(df)
                 bar = snapshot_from_bar(df.iloc[-1])
-                if bar.vol_sma < MIN_AVG_VOLUME:
-                    continue
 
                 flags = evaluate_setup_flags(bar, bench.roc63)
                 fund = evaluate_fundamentals(ticker_obj)
                 news = evaluate_news_velocity(ticker_obj)
                 sector = ticker_sector(ticker)
+                thin_volume = bar.vol_sma < MIN_AVG_VOLUME
+                volume_note = (
+                    f"Avg volume {bar.vol_sma:,.0f} below {MIN_AVG_VOLUME:,} floor."
+                    if thin_volume
+                    else ""
+                )
                 print(
                     f" {ticker} [{sector}]: RS={flags.rs_vs_xiu:+.1f}% "
                     f"bounce={flags.is_bounce_confirmed} "
@@ -386,6 +451,7 @@ def scan_market() -> None:
                     f"fund={'OK' if fund.passes_fundamentals else 'FAIL'} "
                     f"news={'OK' if news.headlines_clean else 'HOT'}"
                     f"{' EARNINGS BLACKOUT' if fund.earnings_conflict else ''}"
+                    f"{' THIN VOLUME' if thin_volume else ''}"
                 )
 
                 is_valid_buy = (
@@ -395,6 +461,7 @@ def scan_market() -> None:
                     and flags.is_rs_leader
                     and flags.is_bounce_confirmed
                     and flags.is_bull_bulletproof
+                    and not thin_volume
                 )
                 is_valid_inverse = (
                     market_regime == "BEAR"
@@ -403,6 +470,7 @@ def scan_market() -> None:
                     and flags.is_rs_laggard
                     and flags.is_rejection_confirmed
                     and flags.is_bear_bulletproof
+                    and not thin_volume
                 )
                 is_watch = (
                     market_regime == "BULL"
@@ -412,6 +480,7 @@ def scan_market() -> None:
                     and fund.passes_fundamentals
                     and news.headlines_clean
                     and not is_extreme_greed
+                    and not thin_volume
                 )
 
                 category = "neutral"
@@ -420,23 +489,22 @@ def scan_market() -> None:
                 elif is_watch:
                     category = "watch"
                 dashboard_cards.append(
-                    {
-                        "ticker": ticker,
-                        "sector": sector,
-                        "close": bar.close,
-                        "category": category,
-                        "adx": bar.adx,
-                        "rvol": flags.rvol,
-                        "sma50_slope": bar.sma_50_slope,
-                        "rs_vs_xiu": flags.rs_vs_xiu,
-                        "pullback_pct": flags.pullback_pct,
-                        "debt_safe": fund.debt_safe,
-                        "fcf_positive": fund.fcf_positive,
-                        "earnings_conflict": fund.earnings_conflict,
-                        "headlines_clean": news.headlines_clean,
-                        "fund_notes": fund.notes,
-                    }
+                    _dashboard_card(
+                        ticker,
+                        sector,
+                        bar,
+                        flags,
+                        fund,
+                        news,
+                        category,
+                        extra_note=volume_note,
+                    )
                 )
+
+                if thin_volume:
+                    print(f" -> [SKIP] {ticker}: {volume_note}")
+                    time.sleep(0.3)
+                    continue
 
                 if is_valid_buy:
                     if _try_dispatch_buy(

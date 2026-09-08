@@ -25,6 +25,7 @@ SECTOR_MAP = {
     "Industrials": ["CNR.TO", "CP.TO", "TRI.TO"],
     "Tech/Retail": ["SHOP.TO", "ATD.TO", "CSU.TO", "DOL.TO"],
     "Index": ["XIU.TO", "VFV.TO", "XQQ.TO"],
+    "Real Estate": ["ZRE.TO", "VRE.TO"],
 }
 
 TSX_WATCHLIST = [
