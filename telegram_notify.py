@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import html
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -129,7 +130,7 @@ def _bulletproof_block(ctx: AlertContext, *, bearish: bool = False) -> str:
 
 def _footer(cooldown_days: int) -> str:
     return (
-        f"⏰ <b>Generated:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')} | "
+        f"⏰ <b>Generated:</b> {datetime.now(ZoneInfo('America/Toronto')).strftime('%Y-%m-%d %H:%M')} | "
         f"<b>Valid:</b> Next Session Open | <b>Cooldown:</b> {cooldown_days} days"
     )
 
@@ -293,7 +294,7 @@ def format_watchlist_html(
         f"💡 <i>Action: Set price alerts at ${ctx.sma200:.2f} and "
         f"${ctx.sma50:.2f}. No live orders.</i>\n"
         f"<i>⏰ <b>Generated:</b> "
-        f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}</i>"
+        f"{datetime.now(ZoneInfo('America/Toronto')).strftime('%Y-%m-%d %H:%M')}</i>"
     )
 
 
@@ -315,7 +316,7 @@ def format_idle_cash_html(
         f"• <b>VIX:</b> {vix_close:.1f} ➔ risk multiplier x{vix_mult:.2f}\n"
         f"• When a 🟢/🔴 setup fires, sell only the CAD needed from {safe_cash}.\n"
         f"\n"
-        f"⏰ <b>Generated:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
+        f"⏰ <b>Generated:</b> {datetime.now(ZoneInfo('America/Toronto')).strftime('%Y-%m-%d %H:%M')}"
     )
 
 
