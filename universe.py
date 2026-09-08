@@ -44,6 +44,9 @@ TSX_WATCHLIST = [
     "XIU.TO",
     "VFV.TO",
     "XQQ.TO",
+    "XGD.TO",
+    "ZRE.TO",
+    "VRE.TO",
 ]
 
 
