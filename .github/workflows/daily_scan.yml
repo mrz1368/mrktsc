@@ -18,10 +18,10 @@ jobs:
       contents: read
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore cooldown DB
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: signals.db
           key: signals-db-${{ github.run_id }}
@@ -29,7 +29,7 @@ jobs:
             signals-db-
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
