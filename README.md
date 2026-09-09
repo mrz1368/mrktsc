@@ -133,9 +133,10 @@ A 🟢 alert only fires when **all** of the following hold:
 6. **Bulletproof tech:** Rising 50 SMA (5-day slope), RVOL ≥ 1.0, low ≥ SMA50 − 1×ATR, ADX ≥ 25  
 7. **Fundamentals:** No earnings blackout; debt/FCF/margin pass when Yahoo provides data (missing fields fail **open** with a note)  
 8. **News:** No negative headline cluster in the last 7 days  
-9. **Book:** Sector sleeve free; cooldown clear; position sizeable at current risk
+9. **Book:** Sector sleeve free; cooldown clear; position sizeable at current risk  
+10. **Liquidity:** 20-day median daily dollar volume ≥ $5M CAD and last close ≥ $5
 
-Bear path mirrors this into BetaPro inverses (`HFD.TO` / `HED.TO` / `HXD.TO`).
+Bear path mirrors this into BetaPro inverses (`CFOD.TO` / `NRGD.TO` / `CNDI.TO`).
 
 ---
 

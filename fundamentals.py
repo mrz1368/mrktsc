@@ -15,7 +15,16 @@ from universe import (
 )
 
 MIN_INTEREST_COVERAGE = 2.0
-ETF_SYMBOLS = {"XIU.TO", "VFV.TO", "XQQ.TO", "CASH.TO"}
+ETF_SYMBOLS = {
+    "XIU.TO",
+    "XIC.TO",
+    "VFV.TO",
+    "XQQ.TO",
+    "CASH.TO",
+    "CFOD.TO",
+    "NRGD.TO",
+    "CNDI.TO",
+}
 
 # Mega-caps where missing Yahoo fundamentals should not veto a pristine technical setup.
 TSX_BLUECHIP_FALLBACK = {

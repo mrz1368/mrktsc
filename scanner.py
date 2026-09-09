@@ -48,9 +48,9 @@ from universe import (
     EARNINGS_BLACKOUT_AHEAD_DAYS,
     EARNINGS_BLACKOUT_POST_DAYS,
     MAX_OPEN_PER_SECTOR,
-    MIN_AVG_VOLUME,
     TSX_WATCHLIST,
     inverse_etf_for_sector,
+    liquidity_filter_reason,
     ticker_sector,
 )
 
@@ -437,12 +437,8 @@ def scan_market() -> None:
                 fund = evaluate_fundamentals(ticker_obj)
                 news = evaluate_news_velocity(ticker_obj)
                 sector = ticker_sector(ticker)
-                thin_volume = bar.vol_sma < MIN_AVG_VOLUME
-                volume_note = (
-                    f"Avg volume {bar.vol_sma:,.0f} below {MIN_AVG_VOLUME:,} floor."
-                    if thin_volume
-                    else ""
-                )
+                liquidity_note = liquidity_filter_reason(df) or ""
+                illiquid = bool(liquidity_note)
                 print(
                     f" {ticker} [{sector}]: RS={flags.rs_vs_xiu:+.1f}% "
                     f"bounce={flags.is_bounce_confirmed} "
@@ -451,7 +447,7 @@ def scan_market() -> None:
                     f"fund={'OK' if fund.passes_fundamentals else 'FAIL'} "
                     f"news={'OK' if news.headlines_clean else 'HOT'}"
                     f"{' EARNINGS BLACKOUT' if fund.earnings_conflict else ''}"
-                    f"{' THIN VOLUME' if thin_volume else ''}"
+                    f"{' ILLIQUID' if illiquid else ''}"
                 )
 
                 is_valid_buy = (
@@ -461,7 +457,7 @@ def scan_market() -> None:
                     and flags.is_rs_leader
                     and flags.is_bounce_confirmed
                     and flags.is_bull_bulletproof
-                    and not thin_volume
+                    and not illiquid
                 )
                 is_valid_inverse = (
                     market_regime == "BEAR"
@@ -470,7 +466,7 @@ def scan_market() -> None:
                     and flags.is_rs_laggard
                     and flags.is_rejection_confirmed
                     and flags.is_bear_bulletproof
-                    and not thin_volume
+                    and not illiquid
                 )
                 is_watch = (
                     market_regime == "BULL"
@@ -480,7 +476,7 @@ def scan_market() -> None:
                     and fund.passes_fundamentals
                     and news.headlines_clean
                     and not is_extreme_greed
-                    and not thin_volume
+                    and not illiquid
                 )
 
                 category = "neutral"
@@ -497,12 +493,12 @@ def scan_market() -> None:
                         fund,
                         news,
                         category,
-                        extra_note=volume_note,
+                        extra_note=liquidity_note,
                     )
                 )
 
-                if thin_volume:
-                    print(f" -> [SKIP] {ticker}: {volume_note}")
+                if illiquid:
+                    print(f" -> [SKIP] {ticker}: {liquidity_note}")
                     time.sleep(0.3)
                     continue
 
