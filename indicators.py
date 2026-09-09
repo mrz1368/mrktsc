@@ -1,4 +1,8 @@
-"""Technical indicators and candle / setup flag helpers."""
+"""Institutional technical indicators and setup flag helpers.
+
+Corrected to use Wilder's smoothing for RSI/ATR, shifted RVOL baselines,
+normalized MA slopes, and Close Location Value (CLV) candle confirmation.
+"""
 
 from __future__ import annotations
 
@@ -14,17 +18,19 @@ SMA_SLOPE_LOOKBACK = 5
 
 
 def _wilder_smooth(series: pd.Series, length: int) -> pd.Series:
-    """Wilder RMA used by ATR / ADX."""
+    """Wilder's smoothing (RMA) used for standard ATR, RSI, and ADX."""
     return series.ewm(alpha=1 / length, adjust=False, min_periods=length).mean()
 
 
 def _adx(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14) -> pd.Series:
+    """Standard ADX calculation using Wilder's smoothing."""
     prev_high = high.shift(1)
     prev_low = low.shift(1)
     prev_close = close.shift(1)
 
     up_move = high - prev_high
     down_move = prev_low - low
+
     plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
     minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
 
@@ -49,31 +55,38 @@ def _adx(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14) ->
 
 
 def add_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute EMA/SMA, RSI, ATR, ADX, volume SMA, slope, and 63-day ROC."""
+    """Compute EMA/SMA, Wilder's RSI, Wilder's ATR, ADX, RVOL, and normalized slope."""
     data = df.copy()
 
     data["EMA_20"] = data["Close"].ewm(span=20, adjust=False).mean()
     data["SMA_50"] = data["Close"].rolling(window=50).mean()
     data["SMA_150"] = data["Close"].rolling(window=150).mean()
     data["SMA_200"] = data["Close"].rolling(window=200).mean()
-    data["SMA_50_SLOPE"] = data["SMA_50"] - data["SMA_50"].shift(SMA_SLOPE_LOOKBACK)
 
+    # Normalized 50 SMA slope (% change over lookback), not dollar change.
+    sma50_prev = data["SMA_50"].shift(SMA_SLOPE_LOOKBACK)
+    data["SMA_50_SLOPE"] = ((data["SMA_50"] - sma50_prev) / (sma50_prev + 1e-9)) * 100.0
+
+    # Wilder's RSI (matches TradingView / Bloomberg / Yahoo convention)
     delta = data["Close"].diff()
     gain = delta.where(delta > 0, 0.0)
     loss = -delta.where(delta < 0, 0.0)
-    avg_gain = gain.rolling(window=14, min_periods=14).mean()
-    avg_loss = loss.rolling(window=14, min_periods=14).mean()
+    avg_gain = _wilder_smooth(gain, 14)
+    avg_loss = _wilder_smooth(loss, 14)
     rs = avg_gain / (avg_loss + 1e-9)
     data["RSI_14"] = 100.0 - (100.0 / (1.0 + rs))
 
+    # Wilder's ATR (same smoother used by ADX and sizing stops)
     tr1 = data["High"] - data["Low"]
     tr2 = (data["High"] - data["Close"].shift(1)).abs()
     tr3 = (data["Low"] - data["Close"].shift(1)).abs()
     true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    data["ATR_14"] = true_range.rolling(window=14).mean()
+    data["ATR_14"] = _wilder_smooth(true_range, 14)
+
     data["ADX_14"] = _adx(data["High"], data["Low"], data["Close"], length=14)
 
-    data["VOL_SMA_20"] = data["Volume"].rolling(window=20).mean()
+    # Shifted volume baseline so today's spike cannot inflate the denominator.
+    data["VOL_SMA_20"] = data["Volume"].shift(1).rolling(window=20).mean()
     data["ROC_63"] = (data["Close"] - data["Close"].shift(63)) / data["Close"].shift(63)
 
     return data
@@ -144,18 +157,29 @@ def snapshot_from_bar(row: pd.Series) -> BarSnapshot:
 
 
 def evaluate_setup_flags(bar: BarSnapshot, benchmark_return: float) -> SetupFlags:
-    pullback_pct = (abs(bar.close - bar.sma_50) / bar.sma_50) * 100
+    # Signed distance to 50 SMA; abs() used only for proximity width.
+    pullback_pct = ((bar.close - bar.sma_50) / bar.sma_50) * 100
     pullback_below_pct = ((bar.sma_50 - bar.close) / bar.sma_50) * 100
+
+    # Close Location Value — institutional confirmation threshold (>60% / <40%).
     day_range = bar.high - bar.low
-    upper_half = (bar.close - bar.low) >= (0.50 * day_range) if day_range > 0 else False
-    lower_half = (bar.close - bar.low) <= (0.50 * day_range) if day_range > 0 else False
+    clv = (bar.close - bar.low) / day_range if day_range > 0 else 0.5
+    strong_bull_wick = clv >= 0.60
+    strong_bear_wick = clv <= 0.40
 
     rvol = (bar.volume / bar.vol_sma) if bar.vol_sma > 0 else 0.0
+
     is_slope_positive = bar.sma_50_slope > 0
     is_slope_negative = bar.sma_50_slope < 0
     is_volume_confirmed = rvol >= MIN_RVOL
-    is_support_intact = bar.low >= (bar.sma_50 - MAX_PENETRATION_ATR * bar.atr)
-    is_resistance_intact = bar.high <= (bar.sma_50 + MAX_PENETRATION_ATR * bar.atr)
+
+    # Close must hold the MA; wick penetration limited to 1x ATR.
+    is_support_intact = (bar.close >= bar.sma_50) and (
+        bar.low >= (bar.sma_50 - MAX_PENETRATION_ATR * bar.atr)
+    )
+    is_resistance_intact = (bar.close <= bar.sma_50) and (
+        bar.high <= (bar.sma_50 + MAX_PENETRATION_ATR * bar.atr)
+    )
     is_trend_strong = bar.adx >= MIN_ADX
 
     is_bull_bulletproof = (
@@ -182,15 +206,16 @@ def evaluate_setup_flags(bar: BarSnapshot, benchmark_return: float) -> SetupFlag
             and bar.close < bar.sma_200
             and bar.sma_50 < bar.sma_200
         ),
-        pullback_pct=pullback_pct,
+        pullback_pct=abs(pullback_pct),
         pullback_below_pct=pullback_below_pct,
-        is_in_pullback=pullback_pct <= 2.5,
-        is_at_resistance=(pullback_pct <= 2.5) and (bar.close <= bar.sma_50),
+        # Long pullback: near support from above — not a close below the 50 SMA.
+        is_in_pullback=(abs(pullback_pct) <= 2.5) and (bar.close >= bar.sma_50),
+        is_at_resistance=(abs(pullback_pct) <= 2.5) and (bar.close <= bar.sma_50),
         dist_to_200_sma_pct=(abs(bar.close - bar.sma_200) / bar.sma_200) * 100,
         is_rs_leader=bar.stock_roc > benchmark_return,
         is_rs_laggard=bar.stock_roc < benchmark_return,
-        is_bounce_confirmed=(bar.close > bar.open) and upper_half,
-        is_rejection_confirmed=(bar.close < bar.open) and lower_half,
+        is_bounce_confirmed=(bar.close > bar.open) and strong_bull_wick,
+        is_rejection_confirmed=(bar.close < bar.open) and strong_bear_wick,
         rs_vs_xiu=(bar.stock_roc - benchmark_return) * 100,
         rvol=rvol,
         is_slope_positive=is_slope_positive,

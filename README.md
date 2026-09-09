@@ -127,14 +127,16 @@ A 🟢 alert only fires when **all** of the following hold:
 
 1. **Market:** XIU in bull regime; Fear & Greed ≤ 75  
 2. **Structure:** Price above 150 & 200 SMA; 50 SMA above 200  
-3. **Pullback:** Close within ~2.5% of the 50 SMA  
+3. **Pullback:** Close within ~2.5% **above** the 50 SMA (not a breakdown below it)  
 4. **Leadership:** 63-day ROC beats XIU  
-5. **Trigger:** Bullish close in the upper half of the day’s range  
-6. **Bulletproof tech:** Rising 50 SMA (5-day slope), RVOL ≥ 1.0, low ≥ SMA50 − 1×ATR, ADX ≥ 25  
+5. **Trigger:** Bullish close with CLV ≥ 0.60 (upper 60% of the day’s range)  
+6. **Bulletproof tech:** Rising 50 SMA (% slope over 5 days), RVOL ≥ 1.0 vs prior 20-day volume, close ≥ SMA50 with low ≥ SMA50 − 1×ATR, ADX ≥ 25  
 7. **Fundamentals:** No earnings blackout; debt/FCF/margin pass when Yahoo provides data (missing fields fail **open** with a note)  
 8. **News:** No negative headline cluster in the last 7 days  
 9. **Book:** Sector sleeve free; cooldown clear; position sizeable at current risk  
 10. **Liquidity:** 20-day median daily dollar volume ≥ $5M CAD and last close ≥ $5
+
+Pullbacks require the **close above the 50 SMA** (within 2.5%). ATR/RSI use Wilder’s RMA so sizing and chart platforms stay aligned.
 
 Bear path mirrors this into BetaPro inverses (`CFOD.TO` / `NRGD.TO` / `CNDI.TO`).
 

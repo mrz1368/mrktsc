@@ -135,7 +135,7 @@
           <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Technical Gates</div>
           <div class="flex justify-between"><span>Trend (ADX):</span><span class="font-mono">{{ '✅' if card.adx >= 25 else '❌' }} {{ "%.1f"|format(card.adx) }}</span></div>
           <div class="flex justify-between"><span>Relative Volume (RVOL):</span><span class="font-mono">{{ '✅' if card.rvol >= 1.0 else '❌' }} {{ "%.2f"|format(card.rvol) }}x</span></div>
-          <div class="flex justify-between"><span>50 SMA Slope:</span><span class="font-mono">{{ '✅' if card.sma50_slope > 0 else '❌' }} {{ "%+.2f"|format(card.sma50_slope) }}</span></div>
+          <div class="flex justify-between"><span>50 SMA Slope:</span><span class="font-mono">{{ '✅' if card.sma50_slope > 0 else '❌' }} {{ "%+.2f"|format(card.sma50_slope) }}%</span></div>
           <div class="flex justify-between"><span>RS vs XIU.TO:</span><span class="font-mono">{{ '✅' if card.rs_vs_xiu > 0 else '❌' }} {{ "%+.1f"|format(card.rs_vs_xiu) }}%</span></div>
           <div class="flex justify-between"><span>Pullback to 50 SMA:</span><span class="font-mono">{{ "%.2f"|format(card.pullback_pct) }}%</span></div>
         </div>
@@ -187,20 +187,20 @@
               Relative volume versus the 20-day volume SMA. Confirms that professional money is defending the pullback.
             </li>
             <li>
-              <strong class="text-slate-100">Rising Support (50 SMA Slope > 0):</strong>
-              Evaluates the 5-day trajectory of the 50-day moving average to ensure price is supported by an ascending trendline.
+              <strong class="text-slate-100">Rising Support (50 SMA Slope > 0%):</strong>
+              Evaluates the 5-day percentage change of the 50-day moving average so slope is price-scale invariant across the TSX universe.
             </li>
             <li>
               <strong class="text-slate-100">Market Outperformance (RS vs XIU.TO > 0%):</strong>
               63-day Rate of Change comparison against the TSX 60 benchmark, ensuring capital flows only into market leaders.
             </li>
             <li>
-              <strong class="text-slate-100">Entry Location (Pullback &le; 2.5%):</strong>
-              Prevents chasing extended breakouts. Entries are only valid when price is within 2.5% of dynamic 50-day support.
+              <strong class="text-slate-100">Entry Location (Pullback &le; 2.5% above 50 SMA):</strong>
+              Prevents chasing extended breakouts and avoids breakdowns. Long entries require the close to hold at or above the 50 SMA within 2.5%.
             </li>
             <li>
-              <strong class="text-slate-100">Candle Confirmation:</strong>
-              Requires a bullish close finishing in the upper 50% of the day's total range, verifying active buyer defense.
+              <strong class="text-slate-100">Candle Confirmation (CLV &ge; 0.60):</strong>
+              Requires a bullish close finishing in the upper 60% of the day's range (Close Location Value), verifying active buyer defense.
             </li>
           </ul>
         </section>
