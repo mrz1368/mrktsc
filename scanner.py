@@ -6,8 +6,11 @@ from __future__ import annotations
 import sqlite3
 import time
 from datetime import datetime, timezone
+from typing import Callable, TypeVar
 
+import pandas as pd
 import yfinance as yf
+from yfinance.exceptions import YFRateLimitError
 
 from config import Config, load_config
 from dashboard import generate_dashboard
@@ -53,6 +56,34 @@ from universe import (
     liquidity_filter_reason,
     ticker_sector,
 )
+
+T = TypeVar("T")
+TICKER_PAUSE_SEC = 0.8
+RATE_LIMIT_BACKOFFS = (5.0, 15.0, 30.0)
+
+
+def _with_yahoo_retries(label: str, fn: Callable[[], T]) -> T:
+    """Retry Yahoo calls when rate-limited; re-raise after final backoff."""
+    last_exc: YFRateLimitError | None = None
+    for attempt, wait_sec in enumerate(RATE_LIMIT_BACKOFFS, start=1):
+        try:
+            return fn()
+        except YFRateLimitError as exc:
+            last_exc = exc
+            print(
+                f" -> [RATE LIMIT] {label}: attempt {attempt}/"
+                f"{len(RATE_LIMIT_BACKOFFS)}; sleeping {wait_sec:.0f}s"
+            )
+            time.sleep(wait_sec)
+    assert last_exc is not None
+    raise last_exc
+
+
+def _fetch_history(ticker: str) -> pd.DataFrame:
+    return _with_yahoo_retries(
+        ticker,
+        lambda: yf.Ticker(ticker).history(period="18mo", interval="1d"),
+    )
 
 
 def _build_alert_context(
@@ -414,8 +445,7 @@ def scan_market() -> None:
     try:
         for ticker in TSX_WATCHLIST:
             try:
-                ticker_obj = yf.Ticker(ticker)
-                df = ticker_obj.history(period="18mo", interval="1d")
+                df = _fetch_history(ticker)
                 if df.empty:
                     reason = "No price history from Yahoo."
                     print(f" -> [SKIP] {ticker}: {reason}")
@@ -430,12 +460,19 @@ def scan_market() -> None:
                     )
                     continue
 
+                ticker_obj = yf.Ticker(ticker)
                 df = add_technical_indicators(df)
                 bar = snapshot_from_bar(df.iloc[-1])
 
                 flags = evaluate_setup_flags(bar, bench.roc63)
-                fund = evaluate_fundamentals(ticker_obj)
-                news = evaluate_news_velocity(ticker_obj)
+                fund = _with_yahoo_retries(
+                    f"{ticker} fundamentals",
+                    lambda: evaluate_fundamentals(ticker_obj),
+                )
+                news = _with_yahoo_retries(
+                    f"{ticker} news",
+                    lambda: evaluate_news_velocity(ticker_obj),
+                )
                 sector = ticker_sector(ticker)
                 liquidity_note = liquidity_filter_reason(df) or ""
                 illiquid = bool(liquidity_note)
@@ -499,7 +536,7 @@ def scan_market() -> None:
 
                 if illiquid:
                     print(f" -> [SKIP] {ticker}: {liquidity_note}")
-                    time.sleep(0.3)
+                    time.sleep(TICKER_PAUSE_SEC)
                     continue
 
                 if is_valid_buy:
@@ -567,8 +604,13 @@ def scan_market() -> None:
                         f"dist200={flags.dist_to_200_sma_pct:.2f}%"
                     )
 
-                time.sleep(0.3)
+                time.sleep(TICKER_PAUSE_SEC)
 
+            except YFRateLimitError as exc:
+                reason = f"Yahoo rate limit after retries: {exc}"
+                print(f"Error scanning {ticker}: {reason}")
+                dashboard_cards.append(_skipped_dashboard_card(ticker, reason))
+                time.sleep(RATE_LIMIT_BACKOFFS[-1])
             except (
                 ValueError,
                 TypeError,
@@ -578,6 +620,9 @@ def scan_market() -> None:
                 RuntimeError,
             ) as exc:
                 print(f"Error scanning {ticker}: {exc}")
+                dashboard_cards.append(
+                    _skipped_dashboard_card(ticker, f"Scan error: {exc}")
+                )
 
         if setups_dispatched == 0:
             send_html_message(
