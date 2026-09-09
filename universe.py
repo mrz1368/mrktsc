@@ -116,10 +116,22 @@ SECTOR_INVERSE_MAP: dict[str, str] = {
     "Broad_Market": "CNDI.TO",  # BetaPro S&P/TSX 60 Daily Inverse (-1x)
 }
 
+# Absolute leverage used when translating underlying ATR risk onto the inverse ETF.
+INVERSE_LEVERAGE: dict[str, float] = {
+    "CFOD.TO": 2.0,
+    "NRGD.TO": 2.0,
+    "CNDI.TO": 1.0,
+}
+
 
 def inverse_etf_for_sector(sector: str) -> str:
     """Return the designated inverse ETF, defaulting to broad market."""
     return SECTOR_INVERSE_MAP.get(sector, SECTOR_INVERSE_MAP["Broad_Market"])
+
+
+def inverse_leverage(ticker: str) -> float:
+    """Absolute daily leverage factor for an inverse vehicle (default 1.0)."""
+    return float(INVERSE_LEVERAGE.get(ticker, 1.0))
 
 
 def ticker_sector(ticker: str) -> str:

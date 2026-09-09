@@ -18,9 +18,12 @@ from db import (
     ALERT_BUY,
     ALERT_INVERSE,
     ALERT_WATCH,
+    STATUS_OPEN,
+    STATUS_PENDING_OPEN,
     ActivePosition,
     active_sectors,
     close_active_position,
+    confirm_pending_position,
     connect,
     list_active_positions,
     open_active_position,
@@ -62,6 +65,7 @@ from universe import (
     SECTOR_INVERSE_MAP,
     TSX_WATCHLIST,
     inverse_etf_for_sector,
+    inverse_leverage,
     liquidity_filter_reason,
     ticker_sector,
 )
@@ -107,7 +111,75 @@ def _position_as_dict(pos: ActivePosition) -> dict:
         "is_de_risked": int(pos.is_de_risked),
         "bars_held": pos.bars_held,
         "sector": pos.sector,
+        "status": pos.status,
+        "signal_price": pos.signal_price,
     }
+
+
+def _confirm_pending_opens(conn: sqlite3.Connection) -> None:
+    """Promote PENDING_OPEN rows using the next session's open print."""
+    pending = list_active_positions(conn, status=STATUS_PENDING_OPEN)
+    if not pending:
+        return
+
+    print(f" -> [FILLS] Confirming {len(pending)} pending open order(s).")
+    for pos in pending:
+        ticker = pos.ticker
+        try:
+            df = _fetch_history(ticker, period="10d")
+            if df.empty or "Open" not in df.columns:
+                print(f" -> [FILL SKIP] {ticker}: no open print available yet.")
+                continue
+
+            try:
+                signal_day = pd.Timestamp(pos.entry_date).date()
+            except (ValueError, TypeError, OSError):
+                signal_day = None
+
+            fill_price: float | None = None
+            fill_date: str | None = None
+            if signal_day is not None:
+                for ts, row in df.iterrows():
+                    bar_day = pd.Timestamp(ts).date()
+                    if bar_day > signal_day:
+                        fill_price = float(row["Open"])
+                        fill_date = pd.Timestamp(ts).isoformat()
+                        break
+
+            if fill_price is None or fill_price <= 0:
+                print(
+                    f" -> [FILL WAIT] {ticker}: waiting for next session open "
+                    f"(signal {pos.entry_date})."
+                )
+                continue
+
+            confirmed = confirm_pending_position(
+                conn,
+                ticker=ticker,
+                fill_price=fill_price,
+                fill_date=fill_date,
+            )
+            if confirmed is None:
+                continue
+            gap_pct = ((fill_price - pos.signal_price) / pos.signal_price) * 100.0
+            print(
+                f" -> [FILL] {ticker}: signal ${pos.signal_price:.2f} -> "
+                f"open ${fill_price:.2f} ({gap_pct:+.2f}%) | "
+                f"stop ${confirmed.initial_stop:.2f}"
+            )
+            time.sleep(TICKER_PAUSE_SEC)
+        except YFRateLimitError as exc:
+            print(f" -> [FILL ERROR] {ticker}: Yahoo rate limit after retries: {exc}")
+            time.sleep(RATE_LIMIT_BACKOFFS[-1])
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            IndexError,
+            OSError,
+            RuntimeError,
+        ) as exc:
+            print(f" -> [FILL ERROR] {ticker}: {exc}")
 
 
 def _manage_open_positions(
@@ -116,14 +188,16 @@ def _manage_open_positions(
     *,
     macro_regime_is_bull: bool,
 ) -> None:
-    """Evaluate tranche exits before scanning for new entries."""
-    positions = list_active_positions(conn)
+    """Confirm pending fills, then evaluate tranche exits on OPEN positions."""
+    _confirm_pending_opens(conn)
+
+    positions = list_active_positions(conn, status=STATUS_OPEN)
     if not positions:
-        print(" -> [EXITS] No active positions to manage.")
+        print(" -> [EXITS] No open positions to manage.")
         return
 
     inverse_vehicles = set(SECTOR_INVERSE_MAP.values())
-    print(f" -> [EXITS] Evaluating {len(positions)} active position(s).")
+    print(f" -> [EXITS] Evaluating {len(positions)} open position(s).")
     for pos in positions:
         ticker = pos.ticker
         try:
@@ -433,8 +507,8 @@ def _try_dispatch_buy(
     open_active_position(conn, ticker=ticker, size=size, sector=sector)
     alerted_sectors.add(sector)
     print(
-        f" -> [POSITION SETUP] {ticker} [{sector}] "
-        f"risk ${dynamic_risk_cad:.0f} | sell {CASH_ETF}."
+        f" -> [POSITION SETUP] {ticker} [{sector}] PENDING_OPEN "
+        f"@ signal ${size.entry:.2f} | risk ${dynamic_risk_cad:.0f} | sell {CASH_ETF}."
     )
     return True
 
@@ -477,8 +551,11 @@ def _try_dispatch_inverse(
     if bar.close <= 0 or bar.atr <= 0:
         return False
 
-    stop_pct = (1.5 * bar.atr) / bar.close
-    inv_atr = (inv_close * stop_pct) / 1.5
+    # Translate underlying ATR risk onto the inverse, scaled by |leverage|.
+    leverage_factor = inverse_leverage(inverse_ticker)
+    underlying_stop_pct = (1.5 * bar.atr) / bar.close
+    inv_stop_pct = underlying_stop_pct * leverage_factor
+    inv_atr = (inv_close * inv_stop_pct) / 1.5
     size = size_position(inv_close, inv_atr, dynamic_risk_cad)
     if size is None:
         return False
@@ -514,7 +591,11 @@ def _try_dispatch_inverse(
     open_active_position(conn, ticker=inverse_ticker, size=size, sector=sector)
     alerted_sectors.add(sector)
     alerted_vehicles.add(inverse_ticker)
-    print(f" -> [INVERSE SETUP] BUY {inverse_ticker} via {ticker} [{sector}].")
+    print(
+        f" -> [INVERSE SETUP] BUY {inverse_ticker} via {ticker} [{sector}] "
+        f"PENDING_OPEN @ signal ${size.entry:.2f} "
+        f"(leverage {inverse_leverage(inverse_ticker):.0f}x)."
+    )
     return True
 
 

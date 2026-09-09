@@ -15,6 +15,9 @@ ALERT_BUY = "buy"
 ALERT_INVERSE = "inverse"
 ALERT_WATCH = "watch"
 
+STATUS_PENDING_OPEN = "PENDING_OPEN"
+STATUS_OPEN = "OPEN"
+
 
 @dataclass(frozen=True)
 class RecordResult:
@@ -34,6 +37,8 @@ class ActivePosition:
     is_de_risked: bool
     bars_held: int
     sector: str
+    status: str
+    signal_price: float
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -103,10 +108,18 @@ def _create_active_positions_table(conn: sqlite3.Connection) -> None:
             shares_remaining INTEGER NOT NULL,
             is_de_risked INTEGER NOT NULL DEFAULT 0,
             bars_held INTEGER NOT NULL DEFAULT 0,
-            sector TEXT NOT NULL
+            sector TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'OPEN',
+            signal_price REAL NOT NULL DEFAULT 0
         )
         """
     )
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
 
 
 def _ensure_active_positions_schema(conn: sqlite3.Connection) -> None:
@@ -116,35 +129,54 @@ def _ensure_active_positions_schema(conn: sqlite3.Connection) -> None:
     if not cols:
         _create_active_positions_table(conn)
         return
-    if "shares_remaining" in cols and "current_stop" in cols:
-        return
-
-    # Migrate legacy retail schema -> tranche schema.
-    conn.execute("ALTER TABLE active_positions RENAME TO active_positions_legacy")
-    _create_active_positions_table(conn)
-    legacy_cols = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(active_positions_legacy)").fetchall()
-    }
-    if "shares" in legacy_cols:
-        stop_expr = (
-            "COALESCE(trailing_stop, initial_stop)"
-            if "trailing_stop" in legacy_cols
-            else "initial_stop"
-        )
-        conn.execute(
-            f"""
-            INSERT INTO active_positions (
-                ticker, entry_date, entry_price, initial_stop, current_stop,
-                shares_total, shares_remaining, is_de_risked, bars_held, sector
+    if "shares_remaining" not in cols or "current_stop" not in cols:
+        # Migrate legacy retail schema -> tranche schema.
+        conn.execute("ALTER TABLE active_positions RENAME TO active_positions_legacy")
+        _create_active_positions_table(conn)
+        legacy_cols = {
+            row[1]
+            for row in conn.execute(
+                "PRAGMA table_info(active_positions_legacy)"
+            ).fetchall()
+        }
+        if "shares" in legacy_cols:
+            stop_expr = (
+                "COALESCE(trailing_stop, initial_stop)"
+                if "trailing_stop" in legacy_cols
+                else "initial_stop"
             )
-            SELECT
-                ticker, entry_date, entry_price, initial_stop, {stop_expr},
-                shares, shares, 0, bars_held, sector
-            FROM active_positions_legacy
-            """
-        )
-    conn.execute("DROP TABLE active_positions_legacy")
+            conn.execute(
+                f"""
+                INSERT INTO active_positions (
+                    ticker, entry_date, entry_price, initial_stop, current_stop,
+                    shares_total, shares_remaining, is_de_risked, bars_held, sector,
+                    status, signal_price
+                )
+                SELECT
+                    ticker, entry_date, entry_price, initial_stop, {stop_expr},
+                    shares, shares, 0, bars_held, sector,
+                    'OPEN', entry_price
+                FROM active_positions_legacy
+                """
+            )
+        conn.execute("DROP TABLE active_positions_legacy")
+
+    _ensure_column(
+        conn, "active_positions", "status", "status TEXT NOT NULL DEFAULT 'OPEN'"
+    )
+    _ensure_column(
+        conn,
+        "active_positions",
+        "signal_price",
+        "signal_price REAL NOT NULL DEFAULT 0",
+    )
+    conn.execute(
+        """
+        UPDATE active_positions
+        SET signal_price = entry_price
+        WHERE signal_price IS NULL OR signal_price = 0
+        """
+    )
 
 
 def record_if_allowed(
@@ -215,10 +247,9 @@ def open_active_position(
     sector: str,
     now: datetime | None = None,
 ) -> None:
-    """Book a live trade into active_positions (upsert by ticker).
+    """Book a PENDING_OPEN order from the EOD signal close.
 
-    Entry price is the EOD signal close used for sizing — not a confirmed
-    next-open fill. Reconcile cost basis after execution if gaps matter.
+    Cost basis is provisional until the next session open is confirmed.
     """
     moment = now or datetime.now(timezone.utc)
     if moment.tzinfo is None:
@@ -228,8 +259,9 @@ def open_active_position(
         """
         INSERT INTO active_positions (
             ticker, entry_date, entry_price, initial_stop, current_stop,
-            shares_total, shares_remaining, is_de_risked, bars_held, sector
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
+            shares_total, shares_remaining, is_de_risked, bars_held, sector,
+            status, signal_price
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)
         ON CONFLICT(ticker) DO UPDATE SET
             entry_date = excluded.entry_date,
             entry_price = excluded.entry_price,
@@ -239,7 +271,9 @@ def open_active_position(
             shares_remaining = excluded.shares_remaining,
             is_de_risked = 0,
             bars_held = 0,
-            sector = excluded.sector
+            sector = excluded.sector,
+            status = excluded.status,
+            signal_price = excluded.signal_price
         """,
         (
             ticker,
@@ -250,20 +284,40 @@ def open_active_position(
             size.shares,
             size.shares,
             sector,
+            STATUS_PENDING_OPEN,
+            size.entry,
         ),
     )
     conn.commit()
 
 
-def list_active_positions(conn: sqlite3.Connection) -> list[ActivePosition]:
-    rows = conn.execute(
-        """
-        SELECT ticker, entry_date, entry_price, initial_stop, current_stop,
-               shares_total, shares_remaining, is_de_risked, bars_held, sector
-        FROM active_positions
-        ORDER BY entry_date ASC
-        """
-    ).fetchall()
+def list_active_positions(
+    conn: sqlite3.Connection,
+    *,
+    status: str | None = None,
+) -> list[ActivePosition]:
+    if status is None:
+        rows = conn.execute(
+            """
+            SELECT ticker, entry_date, entry_price, initial_stop, current_stop,
+                   shares_total, shares_remaining, is_de_risked, bars_held, sector,
+                   status, signal_price
+            FROM active_positions
+            ORDER BY entry_date ASC
+            """
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT ticker, entry_date, entry_price, initial_stop, current_stop,
+                   shares_total, shares_remaining, is_de_risked, bars_held, sector,
+                   status, signal_price
+            FROM active_positions
+            WHERE status = ?
+            ORDER BY entry_date ASC
+            """,
+            (status,),
+        ).fetchall()
     return [
         ActivePosition(
             ticker=row["ticker"],
@@ -276,9 +330,79 @@ def list_active_positions(conn: sqlite3.Connection) -> list[ActivePosition]:
             is_de_risked=bool(row["is_de_risked"]),
             bars_held=int(row["bars_held"]),
             sector=row["sector"],
+            status=str(row["status"] or STATUS_OPEN),
+            signal_price=float(row["signal_price"] or row["entry_price"]),
         )
         for row in rows
     ]
+
+
+def confirm_pending_position(
+    conn: sqlite3.Connection,
+    *,
+    ticker: str,
+    fill_price: float,
+    fill_date: str | None = None,
+) -> ActivePosition | None:
+    """Promote PENDING_OPEN to OPEN using next-session open as cost basis."""
+    row = conn.execute(
+        """
+        SELECT ticker, entry_date, entry_price, initial_stop, current_stop,
+               shares_total, shares_remaining, is_de_risked, bars_held, sector,
+               status, signal_price
+        FROM active_positions
+        WHERE ticker = ?
+        """,
+        (ticker,),
+    ).fetchone()
+    if row is None:
+        return None
+    if str(row["status"]) != STATUS_PENDING_OPEN:
+        return ActivePosition(
+            ticker=row["ticker"],
+            entry_date=row["entry_date"],
+            entry_price=float(row["entry_price"]),
+            initial_stop=float(row["initial_stop"]),
+            current_stop=float(row["current_stop"]),
+            shares_total=int(row["shares_total"]),
+            shares_remaining=int(row["shares_remaining"]),
+            is_de_risked=bool(row["is_de_risked"]),
+            bars_held=int(row["bars_held"]),
+            sector=row["sector"],
+            status=str(row["status"]),
+            signal_price=float(row["signal_price"] or row["entry_price"]),
+        )
+
+    signal_price = float(row["signal_price"] or row["entry_price"])
+    old_entry = float(row["entry_price"])
+    old_stop = float(row["initial_stop"])
+    r_distance = max(old_entry - old_stop, 0.0)
+    new_stop = fill_price - r_distance
+    moment = fill_date or datetime.now(timezone.utc).strftime(ISO_FORMAT)
+
+    conn.execute(
+        """
+        UPDATE active_positions
+        SET entry_date = ?, entry_price = ?, initial_stop = ?, current_stop = ?,
+            status = ?, signal_price = ?, bars_held = 0, is_de_risked = 0
+        WHERE ticker = ?
+        """,
+        (
+            moment,
+            fill_price,
+            new_stop,
+            new_stop,
+            STATUS_OPEN,
+            signal_price,
+            ticker,
+        ),
+    )
+    conn.commit()
+    positions = list_active_positions(conn, status=STATUS_OPEN)
+    for pos in positions:
+        if pos.ticker == ticker:
+            return pos
+    return None
 
 
 def update_active_position(
@@ -294,7 +418,7 @@ def update_active_position(
         """
         UPDATE active_positions
         SET current_stop = ?, shares_remaining = ?, is_de_risked = ?, bars_held = ?
-        WHERE ticker = ?
+        WHERE ticker = ? AND status = ?
         """,
         (
             current_stop,
@@ -302,6 +426,7 @@ def update_active_position(
             1 if is_de_risked else 0,
             bars_held,
             ticker,
+            STATUS_OPEN,
         ),
     )
     conn.commit()
