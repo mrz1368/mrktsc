@@ -1,4 +1,4 @@
-"""SQLite signal log with per-ticker, per-alert-type cooldown."""
+"""SQLite signal log, cooldowns, and active position lifecycle."""
 
 from __future__ import annotations
 
@@ -20,6 +20,20 @@ ALERT_WATCH = "watch"
 class RecordResult:
     inserted: bool
     reason: str
+
+
+@dataclass(frozen=True)
+class ActivePosition:
+    ticker: str
+    entry_date: str
+    entry_price: float
+    initial_stop: float
+    current_stop: float
+    shares_total: int
+    shares_remaining: int
+    is_de_risked: bool
+    bars_held: int
+    sector: str
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -56,6 +70,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         ON signals (ticker, alert_type, created_at)
         """
     )
+    _ensure_active_positions_schema(conn)
     conn.commit()
 
 
@@ -65,7 +80,6 @@ def _ensure_alert_type_column(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE signals ADD COLUMN alert_type TEXT NOT NULL DEFAULT 'buy'"
         )
-        # Migrate legacy WATCH:TICKER rows into typed watch alerts.
         conn.execute(
             """
             UPDATE signals
@@ -74,6 +88,63 @@ def _ensure_alert_type_column(conn: sqlite3.Connection) -> None:
             WHERE ticker LIKE 'WATCH:%'
             """
         )
+
+
+def _create_active_positions_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS active_positions (
+            ticker TEXT PRIMARY KEY,
+            entry_date TEXT NOT NULL,
+            entry_price REAL NOT NULL,
+            initial_stop REAL NOT NULL,
+            current_stop REAL NOT NULL,
+            shares_total INTEGER NOT NULL,
+            shares_remaining INTEGER NOT NULL,
+            is_de_risked INTEGER NOT NULL DEFAULT 0,
+            bars_held INTEGER NOT NULL DEFAULT 0,
+            sector TEXT NOT NULL
+        )
+        """
+    )
+
+
+def _ensure_active_positions_schema(conn: sqlite3.Connection) -> None:
+    cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(active_positions)").fetchall()
+    }
+    if not cols:
+        _create_active_positions_table(conn)
+        return
+    if "shares_remaining" in cols and "current_stop" in cols:
+        return
+
+    # Migrate legacy retail schema -> tranche schema.
+    conn.execute("ALTER TABLE active_positions RENAME TO active_positions_legacy")
+    _create_active_positions_table(conn)
+    legacy_cols = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(active_positions_legacy)").fetchall()
+    }
+    if "shares" in legacy_cols:
+        stop_expr = (
+            "COALESCE(trailing_stop, initial_stop)"
+            if "trailing_stop" in legacy_cols
+            else "initial_stop"
+        )
+        conn.execute(
+            f"""
+            INSERT INTO active_positions (
+                ticker, entry_date, entry_price, initial_stop, current_stop,
+                shares_total, shares_remaining, is_de_risked, bars_held, sector
+            )
+            SELECT
+                ticker, entry_date, entry_price, initial_stop, {stop_expr},
+                shares, shares, 0, bars_held, sector
+            FROM active_positions_legacy
+            """
+        )
+    conn.execute("DROP TABLE active_positions_legacy")
 
 
 def record_if_allowed(
@@ -134,6 +205,117 @@ def record_if_allowed(
     )
     conn.commit()
     return RecordResult(inserted=True, reason="recorded")
+
+
+def open_active_position(
+    conn: sqlite3.Connection,
+    *,
+    ticker: str,
+    size: PositionSize,
+    sector: str,
+    now: datetime | None = None,
+) -> None:
+    """Book a live trade into active_positions (upsert by ticker)."""
+    moment = now or datetime.now(timezone.utc)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+
+    conn.execute(
+        """
+        INSERT INTO active_positions (
+            ticker, entry_date, entry_price, initial_stop, current_stop,
+            shares_total, shares_remaining, is_de_risked, bars_held, sector
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
+        ON CONFLICT(ticker) DO UPDATE SET
+            entry_date = excluded.entry_date,
+            entry_price = excluded.entry_price,
+            initial_stop = excluded.initial_stop,
+            current_stop = excluded.current_stop,
+            shares_total = excluded.shares_total,
+            shares_remaining = excluded.shares_remaining,
+            is_de_risked = 0,
+            bars_held = 0,
+            sector = excluded.sector
+        """,
+        (
+            ticker,
+            moment.strftime(ISO_FORMAT),
+            size.entry,
+            size.stop,
+            size.stop,
+            size.shares,
+            size.shares,
+            sector,
+        ),
+    )
+    conn.commit()
+
+
+def list_active_positions(conn: sqlite3.Connection) -> list[ActivePosition]:
+    rows = conn.execute(
+        """
+        SELECT ticker, entry_date, entry_price, initial_stop, current_stop,
+               shares_total, shares_remaining, is_de_risked, bars_held, sector
+        FROM active_positions
+        ORDER BY entry_date ASC
+        """
+    ).fetchall()
+    return [
+        ActivePosition(
+            ticker=row["ticker"],
+            entry_date=row["entry_date"],
+            entry_price=float(row["entry_price"]),
+            initial_stop=float(row["initial_stop"]),
+            current_stop=float(row["current_stop"]),
+            shares_total=int(row["shares_total"]),
+            shares_remaining=int(row["shares_remaining"]),
+            is_de_risked=bool(row["is_de_risked"]),
+            bars_held=int(row["bars_held"]),
+            sector=row["sector"],
+        )
+        for row in rows
+    ]
+
+
+def update_active_position(
+    conn: sqlite3.Connection,
+    *,
+    ticker: str,
+    current_stop: float,
+    shares_remaining: int,
+    is_de_risked: bool,
+    bars_held: int,
+) -> None:
+    conn.execute(
+        """
+        UPDATE active_positions
+        SET current_stop = ?, shares_remaining = ?, is_de_risked = ?, bars_held = ?
+        WHERE ticker = ?
+        """,
+        (
+            current_stop,
+            shares_remaining,
+            1 if is_de_risked else 0,
+            bars_held,
+            ticker,
+        ),
+    )
+    conn.commit()
+
+
+def close_active_position(conn: sqlite3.Connection, ticker: str) -> None:
+    conn.execute("DELETE FROM active_positions WHERE ticker = ?", (ticker,))
+    conn.commit()
+
+
+def active_sectors(conn: sqlite3.Connection) -> set[str]:
+    rows = conn.execute(
+        """
+        SELECT DISTINCT sector FROM active_positions
+        WHERE shares_remaining > 0
+        """
+    ).fetchall()
+    return {row["sector"] for row in rows}
 
 
 def count_signals(

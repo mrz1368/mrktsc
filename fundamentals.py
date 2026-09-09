@@ -156,6 +156,34 @@ def _check_earnings_blackout(ticker_obj: yf.Ticker, notes: list[str]) -> bool:
     return False
 
 
+def days_to_next_earnings(ticker_obj: yf.Ticker) -> int | None:
+    """Return whole days until the next upcoming earnings date, or None."""
+    try:
+        calendar = ticker_obj.calendar
+        now = datetime.now(timezone.utc)
+        upcoming: list[int] = []
+        for edate in _earnings_dates(calendar):
+            if not edate:
+                continue
+            earnings_ts = _as_utc(pd.to_datetime(edate))
+            days = (earnings_ts.to_pydatetime() - now).days
+            if days >= 0:
+                upcoming.append(days)
+        if not upcoming:
+            return None
+        return min(upcoming)
+    except (
+        ValueError,
+        TypeError,
+        KeyError,
+        IndexError,
+        AttributeError,
+        OSError,
+        RuntimeError,
+    ):
+        return None
+
+
 def _interest_coverage(info: dict) -> float | None:
     coverage = _safe_float(info.get("interestCoverage"))
     if coverage is not None:

@@ -320,6 +320,57 @@ def format_idle_cash_html(
     )
 
 
+def format_exit_html(
+    *,
+    ticker: str,
+    action: str,
+    entry_price: float,
+    exit_price: float,
+    shares_to_sell: int,
+    shares_remaining: int,
+    new_stop_price: float,
+    message: str,
+    cash_etf: str = "CASH.TO",
+) -> str:
+    safe_ticker = html.escape(ticker)
+    safe_action = html.escape(action)
+    safe_message = html.escape(message)
+    safe_cash = html.escape(cash_etf)
+    is_partial = shares_remaining > 0 and "PARTIAL" in action
+    icon = "🟡" if is_partial else "🔴"
+    title = "SCALE-OUT" if is_partial else "EXIT SIGNAL"
+    pnl_per_share = exit_price - entry_price
+    pnl_dollars = pnl_per_share * shares_to_sell
+    pnl_pct = (pnl_per_share / entry_price) * 100.0 if entry_price else 0.0
+    sign = "+" if pnl_dollars >= 0 else ""
+    if is_partial:
+        action_line = (
+            f"• <b>Action:</b> Sell {shares_to_sell} shares at tomorrow's open; "
+            f"leave {shares_remaining} as free-roll runner.\n"
+            f"• <b>New Stop:</b> ${new_stop_price:.2f} (break-even ratchet).\n"
+            f"• <b>Cash Sweep:</b> Park scale proceeds in {safe_cash}."
+        )
+    else:
+        action_line = (
+            f"• <b>Action:</b> Sell all {shares_to_sell} shares at tomorrow's open.\n"
+            f"• <b>Capital Reallocation:</b> Sweep proceeds back to {safe_cash}."
+        )
+    return (
+        f"{icon} <b>{title} | {safe_ticker}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Trigger:</b> {safe_action}\n"
+        f"• <b>Entry:</b> ${entry_price:.2f} | <b>Mark/Exit:</b> ${exit_price:.2f}\n"
+        f"• <b>Sell Qty:</b> {shares_to_sell}\n"
+        f"• <b>PnL on sold:</b> {sign}${pnl_per_share:.2f}/sh "
+        f"({sign}{pnl_pct:.1f}%) | {sign}${pnl_dollars:.2f} CAD\n"
+        f"• <b>Reason:</b> {safe_message}\n"
+        f"{action_line}\n"
+        f"\n"
+        f"⏰ <b>Generated:</b> "
+        f"{datetime.now(ZoneInfo('America/Toronto')).strftime('%Y-%m-%d %H:%M')}"
+    )
+
+
 def send_html_message(token: str, chat_id: str, text: str, timeout: int = 20) -> dict:
     url = f"{TELEGRAM_API}/bot{token}/sendMessage"
     response = requests.post(

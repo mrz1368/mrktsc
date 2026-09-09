@@ -18,10 +18,17 @@ from db import (
     ALERT_BUY,
     ALERT_INVERSE,
     ALERT_WATCH,
+    ActivePosition,
+    active_sectors,
+    close_active_position,
     connect,
+    list_active_positions,
+    open_active_position,
     record_if_allowed,
+    update_active_position,
 )
-from fundamentals import FundamentalsResult, evaluate_fundamentals
+from exits import ExitAction, evaluate_institutional_exit
+from fundamentals import FundamentalsResult, days_to_next_earnings, evaluate_fundamentals
 from indicators import (
     BarSnapshot,
     SetupFlags,
@@ -39,6 +46,7 @@ from sentiment import (
 from sizing import PositionSize, size_position
 from telegram_notify import (
     AlertContext,
+    format_exit_html,
     format_idle_cash_html,
     format_inverse_html,
     format_setup_html,
@@ -51,6 +59,7 @@ from universe import (
     EARNINGS_BLACKOUT_AHEAD_DAYS,
     EARNINGS_BLACKOUT_POST_DAYS,
     MAX_OPEN_PER_SECTOR,
+    SECTOR_INVERSE_MAP,
     TSX_WATCHLIST,
     inverse_etf_for_sector,
     liquidity_filter_reason,
@@ -79,11 +88,165 @@ def _with_yahoo_retries(label: str, fn: Callable[[], T]) -> T:
     raise last_exc
 
 
-def _fetch_history(ticker: str) -> pd.DataFrame:
+def _fetch_history(ticker: str, period: str = "18mo") -> pd.DataFrame:
     return _with_yahoo_retries(
         ticker,
-        lambda: yf.Ticker(ticker).history(period="18mo", interval="1d"),
+        lambda: yf.Ticker(ticker).history(period=period, interval="1d"),
     )
+
+
+def _position_as_dict(pos: ActivePosition) -> dict:
+    return {
+        "ticker": pos.ticker,
+        "entry_date": pos.entry_date,
+        "entry_price": pos.entry_price,
+        "initial_stop": pos.initial_stop,
+        "current_stop": pos.current_stop,
+        "shares_total": pos.shares_total,
+        "shares_remaining": pos.shares_remaining,
+        "is_de_risked": int(pos.is_de_risked),
+        "bars_held": pos.bars_held,
+        "sector": pos.sector,
+    }
+
+
+def _manage_open_positions(
+    conn: sqlite3.Connection,
+    cfg: Config,
+    *,
+    macro_regime_is_bull: bool,
+) -> None:
+    """Evaluate tranche exits before scanning for new entries."""
+    positions = list_active_positions(conn)
+    if not positions:
+        print(" -> [EXITS] No active positions to manage.")
+        return
+
+    inverse_vehicles = set(SECTOR_INVERSE_MAP.values())
+    print(f" -> [EXITS] Evaluating {len(positions)} active position(s).")
+    for pos in positions:
+        ticker = pos.ticker
+        try:
+            df = _fetch_history(ticker, period="6mo")
+            if df.empty or len(df) < 50:
+                print(f" -> [EXIT SKIP] {ticker}: insufficient history for exit gates.")
+                continue
+
+            ticker_obj = yf.Ticker(ticker)
+            days_earn = _with_yahoo_retries(
+                f"{ticker} earnings horizon",
+                lambda t=ticker_obj: days_to_next_earnings(t),
+            )
+            signal, updated = evaluate_institutional_exit(
+                _position_as_dict(pos),
+                df,
+                days_earn,
+                macro_regime_is_bull,
+                apply_regime_veto=ticker not in inverse_vehicles,
+            )
+
+            if signal.action == ExitAction.HOLD:
+                update_active_position(
+                    conn,
+                    ticker=ticker,
+                    current_stop=float(updated["current_stop"]),
+                    shares_remaining=int(updated["shares_remaining"]),
+                    is_de_risked=bool(updated["is_de_risked"]),
+                    bars_held=int(updated["bars_held"]),
+                )
+                print(
+                    f" -> [HOLD] {ticker}: stop=${updated['current_stop']:.2f} "
+                    f"bars={updated['bars_held']} "
+                    f"de_risked={bool(updated['is_de_risked'])} "
+                    f"qty={updated['shares_remaining']}"
+                )
+            elif signal.action == ExitAction.PARTIAL_SCALE:
+                remaining = int(updated["shares_remaining"])
+                if remaining <= 0:
+                    send_html_message(
+                        cfg.telegram_bot_token,
+                        cfg.telegram_chat_id,
+                        format_exit_html(
+                            ticker=ticker,
+                            action=signal.action.value,
+                            entry_price=pos.entry_price,
+                            exit_price=signal.exit_price,
+                            shares_to_sell=signal.shares_to_sell,
+                            shares_remaining=0,
+                            new_stop_price=0.0,
+                            message=signal.reason,
+                            cash_etf=CASH_ETF,
+                        ),
+                    )
+                    close_active_position(conn, ticker)
+                    print(
+                        f" -> [EXIT] {ticker}: scale emptied book "
+                        f"@ ${signal.exit_price:.2f}"
+                    )
+                else:
+                    update_active_position(
+                        conn,
+                        ticker=ticker,
+                        current_stop=float(updated["current_stop"]),
+                        shares_remaining=remaining,
+                        is_de_risked=True,
+                        bars_held=int(updated["bars_held"]),
+                    )
+                    send_html_message(
+                        cfg.telegram_bot_token,
+                        cfg.telegram_chat_id,
+                        format_exit_html(
+                            ticker=ticker,
+                            action=signal.action.value,
+                            entry_price=pos.entry_price,
+                            exit_price=signal.exit_price,
+                            shares_to_sell=signal.shares_to_sell,
+                            shares_remaining=remaining,
+                            new_stop_price=signal.new_stop_price,
+                            message=signal.reason,
+                            cash_etf=CASH_ETF,
+                        ),
+                    )
+                    print(
+                        f" -> [SCALE] {ticker}: sold {signal.shares_to_sell} @ "
+                        f"${signal.exit_price:.2f}; runner={remaining} "
+                        f"stop=${signal.new_stop_price:.2f}"
+                    )
+            else:
+                send_html_message(
+                    cfg.telegram_bot_token,
+                    cfg.telegram_chat_id,
+                    format_exit_html(
+                        ticker=ticker,
+                        action=signal.action.value,
+                        entry_price=pos.entry_price,
+                        exit_price=signal.exit_price,
+                        shares_to_sell=signal.shares_to_sell,
+                        shares_remaining=0,
+                        new_stop_price=0.0,
+                        message=signal.reason,
+                        cash_etf=CASH_ETF,
+                    ),
+                )
+                close_active_position(conn, ticker)
+                print(
+                    f" -> [EXIT] {ticker}: {signal.action.value} "
+                    f"sold {signal.shares_to_sell} @ ${signal.exit_price:.2f}"
+                )
+            time.sleep(TICKER_PAUSE_SEC)
+        except YFRateLimitError as exc:
+            print(f" -> [EXIT ERROR] {ticker}: Yahoo rate limit after retries: {exc}")
+            time.sleep(RATE_LIMIT_BACKOFFS[-1])
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            IndexError,
+            OSError,
+            RuntimeError,
+        ) as exc:
+            print(f" -> [EXIT ERROR] {ticker}: {exc}")
+
 
 
 def _build_alert_context(
@@ -264,6 +427,7 @@ def _try_dispatch_buy(
         cfg.telegram_chat_id,
         format_setup_html(size, ctx),
     )
+    open_active_position(conn, ticker=ticker, size=size, sector=sector)
     alerted_sectors.add(sector)
     print(
         f" -> [POSITION SETUP] {ticker} [{sector}] "
@@ -344,6 +508,7 @@ def _try_dispatch_inverse(
         cfg.telegram_chat_id,
         format_inverse_html(size, ctx, inverse_ticker=inverse_ticker),
     )
+    open_active_position(conn, ticker=inverse_ticker, size=size, sector=sector)
     alerted_sectors.add(sector)
     alerted_vehicles.add(inverse_ticker)
     print(f" -> [INVERSE SETUP] BUY {inverse_ticker} via {ticker} [{sector}].")
@@ -420,7 +585,7 @@ def scan_market() -> None:
     bench = load_benchmark_state()
     market_regime = bench.market_regime
     is_extreme_greed = macro.is_extreme_greed
-    alerted_sectors: set[str] = set()
+    alerted_sectors: set[str] = set(active_sectors(conn))
     alerted_vehicles: set[str] = set()
     setups_dispatched = 0
     dashboard_cards: list[dict] = []
@@ -434,6 +599,11 @@ def scan_market() -> None:
         f"Sentiment: {macro.rating} {macro.score:.0f}/100 | "
         f"XIU {market_regime} 3M {bench.roc63 * 100:+.2f}%"
     )
+    if alerted_sectors:
+        print(
+            " -> [BOOK] Active sector sleeves in use: "
+            + ", ".join(sorted(alerted_sectors))
+        )
     if is_extreme_greed:
         print(" -> [REGIME VETO] Extreme Greed: new long setups are blocked.")
     if market_regime == "BEAR":
@@ -443,6 +613,14 @@ def scan_market() -> None:
         )
 
     try:
+        _manage_open_positions(
+            conn,
+            cfg,
+            macro_regime_is_bull=market_regime == "BULL",
+        )
+        # Refresh after exits so freed sleeves can accept new setups today.
+        alerted_sectors = set(active_sectors(conn))
+
         for ticker in TSX_WATCHLIST:
             try:
                 df = _fetch_history(ticker)
