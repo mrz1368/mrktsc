@@ -132,17 +132,20 @@ def _manage_open_positions(
                 print(f" -> [EXIT SKIP] {ticker}: insufficient history for exit gates.")
                 continue
 
-            ticker_obj = yf.Ticker(ticker)
-            days_earn = _with_yahoo_retries(
-                f"{ticker} earnings horizon",
-                lambda t=ticker_obj: days_to_next_earnings(t),
-            )
+            is_inverse = ticker in inverse_vehicles
+            days_earn: int | None = None
+            if not is_inverse:
+                ticker_obj = yf.Ticker(ticker)
+                days_earn = _with_yahoo_retries(
+                    f"{ticker} earnings horizon",
+                    lambda t=ticker_obj: days_to_next_earnings(t),
+                )
             signal, updated = evaluate_institutional_exit(
                 _position_as_dict(pos),
                 df,
                 days_earn,
                 macro_regime_is_bull,
-                apply_regime_veto=ticker not in inverse_vehicles,
+                is_inverse_vehicle=is_inverse,
             )
 
             if signal.action == ExitAction.HOLD:
@@ -643,29 +646,12 @@ def scan_market() -> None:
                 bar = snapshot_from_bar(df.iloc[-1])
 
                 flags = evaluate_setup_flags(bar, bench.roc63)
-                fund = _with_yahoo_retries(
-                    f"{ticker} fundamentals",
-                    lambda: evaluate_fundamentals(ticker_obj),
-                )
-                news = _with_yahoo_retries(
-                    f"{ticker} news",
-                    lambda: evaluate_news_velocity(ticker_obj),
-                )
                 sector = ticker_sector(ticker)
                 liquidity_note = liquidity_filter_reason(df) or ""
                 illiquid = bool(liquidity_note)
-                print(
-                    f" {ticker} [{sector}]: RS={flags.rs_vs_xiu:+.1f}% "
-                    f"bounce={flags.is_bounce_confirmed} "
-                    f"RVOL={flags.rvol:.2f} ADX={bar.adx:.1f} "
-                    f"slope={'UP' if flags.is_slope_positive else 'DN'} "
-                    f"fund={'OK' if fund.passes_fundamentals else 'FAIL'} "
-                    f"news={'OK' if news.headlines_clean else 'HOT'}"
-                    f"{' EARNINGS BLACKOUT' if fund.earnings_conflict else ''}"
-                    f"{' ILLIQUID' if illiquid else ''}"
-                )
 
-                is_valid_buy = (
+                # Defer Yahoo info/news until technical gates arm a candidate.
+                tech_buy_candidate = (
                     market_regime == "BULL"
                     and flags.is_macro_bullish
                     and flags.is_in_pullback
@@ -674,7 +660,7 @@ def scan_market() -> None:
                     and flags.is_bull_bulletproof
                     and not illiquid
                 )
-                is_valid_inverse = (
+                tech_inv_candidate = (
                     market_regime == "BEAR"
                     and flags.is_macro_bearish
                     and flags.is_at_resistance
@@ -683,15 +669,61 @@ def scan_market() -> None:
                     and flags.is_bear_bulletproof
                     and not illiquid
                 )
-                is_watch = (
+                tech_watch_candidate = (
                     market_regime == "BULL"
                     and flags.is_macro_bullish
                     and not flags.is_in_pullback
                     and flags.dist_to_200_sma_pct <= 3.0
-                    and fund.passes_fundamentals
-                    and news.headlines_clean
                     and not is_extreme_greed
                     and not illiquid
+                )
+                needs_fund_news = (
+                    tech_buy_candidate or tech_inv_candidate or tech_watch_candidate
+                )
+
+                if needs_fund_news:
+                    fund = _with_yahoo_retries(
+                        f"{ticker} fundamentals",
+                        lambda: evaluate_fundamentals(ticker_obj),
+                    )
+                    news = _with_yahoo_retries(
+                        f"{ticker} news",
+                        lambda: evaluate_news_velocity(ticker_obj),
+                    )
+                else:
+                    fund = FundamentalsResult(
+                        earnings_conflict=False,
+                        debt_safe=True,
+                        fcf_positive=True,
+                        quality_ok=True,
+                        notes="Deferred: technical gates not armed (Yahoo calls skipped)",
+                        score=0.0,
+                        metadata_complete=False,
+                    )
+                    news = NewsVelocityResult(
+                        headlines_clean=True,
+                        hit_count=0,
+                        notes="Deferred: technical gates not armed",
+                    )
+
+                print(
+                    f" {ticker} [{sector}]: RS={flags.rs_vs_xiu:+.1f}% "
+                    f"bounce={flags.is_bounce_confirmed} "
+                    f"RVOL={flags.rvol:.2f} ADX={bar.adx:.1f} "
+                    f"slope={'UP' if flags.is_slope_positive else 'DN'} "
+                    f"fund={'OK' if fund.passes_fundamentals else 'FAIL'}"
+                    f"{'/SKIP' if not needs_fund_news else ''} "
+                    f"news={'OK' if news.headlines_clean else 'HOT'}"
+                    f"{' EARNINGS BLACKOUT' if fund.earnings_conflict else ''}"
+                    f"{' ILLIQUID' if illiquid else ''}"
+                )
+
+                is_valid_buy = tech_buy_candidate
+                is_valid_inverse = tech_inv_candidate
+                is_watch = (
+                    tech_watch_candidate
+                    and fund.passes_fundamentals
+                    and news.headlines_clean
                 )
 
                 category = "neutral"

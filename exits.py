@@ -1,11 +1,11 @@
-"""Institutional multi-tranche exit evaluator.
+"""Institutional multi-tranche exit evaluator (corrected).
 
 Implements:
 - Staged scaling (50% harvest at 1.5R, trail remainder)
 - Stop-to-breakeven ratchet
-- Trend continuation trailing stop (20 EMA / 50 SMA)
-- Event risk liquidation (pre-earnings T-2)
-- Macro regime override
+- Trend continuation trailing stop (20 EMA floor)
+- Event risk liquidation (pre-earnings T-2, equities only)
+- Symmetric macro regime override (longs in bear, inverses in bull)
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ def evaluate_institutional_exit(
     days_to_earnings: int | None,
     macro_regime_is_bull: bool,
     *,
-    apply_regime_veto: bool = True,
+    is_inverse_vehicle: bool = False,
     max_holding_bars: int = 15,
 ) -> tuple[ExitSignal, dict]:
     """Evaluate an active position using an institutional tranche lifecycle."""
@@ -84,8 +84,12 @@ def evaluate_institutional_exit(
             updated_pos,
         )
 
-    # 1. Exogenous override: mandatory pre-earnings liquidation
-    if days_to_earnings is not None and 0 <= days_to_earnings <= 2:
+    # 1. Event risk override: pre-earnings purge (equities only)
+    if (
+        not is_inverse_vehicle
+        and days_to_earnings is not None
+        and 0 <= days_to_earnings <= 2
+    ):
         return _signal(
             ExitAction.FULL_EXIT_EARNINGS,
             shares_held,
@@ -93,13 +97,20 @@ def evaluate_institutional_exit(
             f"Mandatory catalyst de-risking: Earnings in {days_to_earnings} days.",
         )
 
-    # 2. Macro regime override: systematic long beta purge
-    if apply_regime_veto and not macro_regime_is_bull:
+    # 2. Macro regime override: purge longs in bear; purge inverses in bull
+    if not is_inverse_vehicle and not macro_regime_is_bull:
         return _signal(
             ExitAction.FULL_EXIT_REGIME,
             shares_held,
             0.0,
-            "Benchmark broke 200 SMA (Bear Regime). Systematic risk purge.",
+            "Benchmark broke 200 SMA (Bear Regime). Systematic long purge.",
+        )
+    if is_inverse_vehicle and macro_regime_is_bull:
+        return _signal(
+            ExitAction.FULL_EXIT_REGIME,
+            shares_held,
+            0.0,
+            "Benchmark reclaimed 200 SMA (Bull Regime). Inverse hedge liquidated.",
         )
 
     # 3. Capital preservation: close-confirmed hard stop
@@ -108,10 +119,10 @@ def evaluate_institutional_exit(
             ExitAction.FULL_EXIT_STOP,
             shares_held,
             0.0,
-            f"Close (${current_close:.2f}) violated stop level (${current_stop:.2f}).",
+            f"Close (${current_close:.2f}) breached stop level (${current_stop:.2f}).",
         )
 
-    # 4. Tranche 1: de-risking scale at 1.5R (close-confirmed)
+    # 4. Tranche 1: de-risking harvest at 1.5R target
     r_distance = entry_price - initial_stop
     target_1_5r = entry_price + (1.5 * r_distance)
 
@@ -119,7 +130,7 @@ def evaluate_institutional_exit(
         half_shares = max(1, shares_held // 2)
         if half_shares >= shares_held:
             half_shares = max(1, shares_held - 1) if shares_held > 1 else shares_held
-        new_stop = max(current_stop, entry_price * 1.001)
+        new_stop = max(current_stop, entry_price * 1.002)
         remaining = shares_held - half_shares
         updated_pos["is_de_risked"] = 1
         updated_pos["shares_remaining"] = remaining
@@ -128,26 +139,25 @@ def evaluate_institutional_exit(
             ExitAction.PARTIAL_SCALE,
             half_shares,
             new_stop,
-            f"Hit 1.5R (${target_1_5r:.2f}). Sell 50%, ratchet stop to Break-Even.",
+            f"Hit 1.5R target (${target_1_5r:.2f}). Scaled 50%, ratcheted stop to BE.",
             exit_price=current_close,
         )
 
-    # 5. Tranche 2: core trend trail (post de-risking)
+    # 5. Tranche 2: core runner trail (post de-risking) along rising 20 EMA
     if is_de_risked:
-        trailing_benchmark = min(ema20, sma50)
-        if trailing_benchmark > current_stop:
-            updated_pos["current_stop"] = trailing_benchmark
-            current_stop = trailing_benchmark
+        if ema20 > current_stop:
+            updated_pos["current_stop"] = ema20
+            current_stop = ema20
 
         if current_close < sma50:
             return _signal(
                 ExitAction.FULL_EXIT_TRAIL,
                 shares_held,
                 0.0,
-                "Core runner closed below 50 SMA. Trend exhaustion confirmed.",
+                "Core runner closed below 50 SMA. Trend structure broken.",
             )
 
-    # 6. Time stagnation: dead capital velocity exit (pre de-risk only)
+    # 6. Capital velocity time stop (stagnation pre-harvest)
     if bars_held >= max_holding_bars and not is_de_risked:
         pnl_pct = ((current_close - entry_price) / entry_price) * 100.0
         if abs(pnl_pct) < 1.0:
@@ -156,8 +166,8 @@ def evaluate_institutional_exit(
                 shares_held,
                 0.0,
                 (
-                    f"Capital velocity dead-lock ({bars_held} bars near 0% PnL). "
-                    "Recycle."
+                    f"Capital stagnant for {bars_held} bars near 0% PnL. "
+                    "Reallocate to CASH.TO."
                 ),
             )
 

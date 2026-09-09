@@ -215,7 +215,11 @@ def open_active_position(
     sector: str,
     now: datetime | None = None,
 ) -> None:
-    """Book a live trade into active_positions (upsert by ticker)."""
+    """Book a live trade into active_positions (upsert by ticker).
+
+    Entry price is the EOD signal close used for sizing — not a confirmed
+    next-open fill. Reconcile cost basis after execution if gaps matter.
+    """
     moment = now or datetime.now(timezone.utc)
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
