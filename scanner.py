@@ -674,6 +674,22 @@ def scan_market() -> None:
     setups_dispatched = 0
     dashboard_cards: list[dict] = []
 
+    # Placeholder rows for names that fail the technical pre-screen (no Yahoo I/O).
+    dummy_fund = FundamentalsResult(
+        earnings_conflict=False,
+        debt_safe=True,
+        fcf_positive=True,
+        quality_ok=True,
+        notes="Skipped API Fetch (Failed Tech Gates)",
+        score=0.0,
+        metadata_complete=False,
+    )
+    dummy_news = NewsVelocityResult(
+        headlines_clean=True,
+        hit_count=0,
+        notes="Skipped API Fetch (Failed Tech Gates)",
+    )
+
     print(f"Current Market Regime: {market_regime}")
     print(
         f"[{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}] "
@@ -685,8 +701,7 @@ def scan_market() -> None:
     )
     if alerted_sectors:
         print(
-            " -> [BOOK] Active sector sleeves in use: "
-            + ", ".join(sorted(alerted_sectors))
+            " -> [BOOK] Active sector sleeves: " + ", ".join(sorted(alerted_sectors))
         )
     if is_extreme_greed:
         print(" -> [REGIME VETO] Extreme Greed: new long setups are blocked.")
@@ -702,11 +717,11 @@ def scan_market() -> None:
             cfg,
             macro_regime_is_bull=market_regime == "BULL",
         )
-        # Refresh after exits so freed sleeves can accept new setups today.
         alerted_sectors = set(active_sectors(conn))
 
         for ticker in TSX_WATCHLIST:
             try:
+                # 1. Price history first (1 Yahoo call per ticker).
                 df = _fetch_history(ticker)
                 if df.empty:
                     reason = "No price history from Yahoo."
@@ -722,17 +737,16 @@ def scan_market() -> None:
                     )
                     continue
 
-                ticker_obj = yf.Ticker(ticker)
+                # 2. Vectorized technical math (no extra network I/O).
                 df = add_technical_indicators(df)
                 bar = snapshot_from_bar(df.iloc[-1])
-
                 flags = evaluate_setup_flags(bar, bench.roc63)
                 sector = ticker_sector(ticker)
                 liquidity_note = liquidity_filter_reason(df) or ""
                 illiquid = bool(liquidity_note)
 
-                # Defer Yahoo info/news until technical gates arm a candidate.
-                tech_buy_candidate = (
+                # 3. Technical pre-screen.
+                is_tech_buy = (
                     market_regime == "BULL"
                     and flags.is_macro_bullish
                     and flags.is_in_pullback
@@ -741,7 +755,7 @@ def scan_market() -> None:
                     and flags.is_bull_bulletproof
                     and not illiquid
                 )
-                tech_inv_candidate = (
+                is_tech_inverse = (
                     market_regime == "BEAR"
                     and flags.is_macro_bearish
                     and flags.is_at_resistance
@@ -750,7 +764,7 @@ def scan_market() -> None:
                     and flags.is_bear_bulletproof
                     and not illiquid
                 )
-                tech_watch_candidate = (
+                is_tech_watch = (
                     market_regime == "BULL"
                     and flags.is_macro_bullish
                     and not flags.is_in_pullback
@@ -758,60 +772,49 @@ def scan_market() -> None:
                     and not is_extreme_greed
                     and not illiquid
                 )
-                needs_fund_news = (
-                    tech_buy_candidate or tech_inv_candidate or tech_watch_candidate
-                )
+                needs_deep_scan = is_tech_buy or is_tech_inverse or is_tech_watch
 
-                if needs_fund_news:
+                # 4. Inverted funnel: fundamentals/news only if technicals arm.
+                if needs_deep_scan:
+                    ticker_obj = yf.Ticker(ticker)
                     fund = _with_yahoo_retries(
                         f"{ticker} fundamentals",
-                        lambda: evaluate_fundamentals(ticker_obj),
+                        lambda t=ticker_obj: evaluate_fundamentals(t),
                     )
                     news = _with_yahoo_retries(
                         f"{ticker} news",
-                        lambda: evaluate_news_velocity(ticker_obj),
+                        lambda t=ticker_obj: evaluate_news_velocity(t),
                     )
                 else:
-                    fund = FundamentalsResult(
-                        earnings_conflict=False,
-                        debt_safe=True,
-                        fcf_positive=True,
-                        quality_ok=True,
-                        notes="Deferred: technical gates not armed (Yahoo calls skipped)",
-                        score=0.0,
-                        metadata_complete=False,
-                    )
-                    news = NewsVelocityResult(
-                        headlines_clean=True,
-                        hit_count=0,
-                        notes="Deferred: technical gates not armed",
-                    )
+                    fund = dummy_fund
+                    news = dummy_news
 
-                print(
-                    f" {ticker} [{sector}]: RS={flags.rs_vs_xiu:+.1f}% "
-                    f"bounce={flags.is_bounce_confirmed} "
-                    f"RVOL={flags.rvol:.2f} ADX={bar.adx:.1f} "
-                    f"slope={'UP' if flags.is_slope_positive else 'DN'} "
-                    f"fund={'OK' if fund.passes_fundamentals else 'FAIL'}"
-                    f"{'/SKIP' if not needs_fund_news else ''} "
-                    f"news={'OK' if news.headlines_clean else 'HOT'}"
-                    f"{' EARNINGS BLACKOUT' if fund.earnings_conflict else ''}"
-                    f"{' ILLIQUID' if illiquid else ''}"
+                # 5. Final confirmation with fundamental / news gates.
+                is_valid_buy = (
+                    is_tech_buy
+                    and fund.passes_fundamentals
+                    and news.headlines_clean
+                    and not fund.earnings_conflict
                 )
-
-                is_valid_buy = tech_buy_candidate
-                is_valid_inverse = tech_inv_candidate
+                is_valid_inverse = (
+                    is_tech_inverse
+                    and fund.passes_fundamentals
+                    and news.headlines_clean
+                    and not fund.earnings_conflict
+                )
                 is_watch = (
-                    tech_watch_candidate
+                    is_tech_watch
                     and fund.passes_fundamentals
                     and news.headlines_clean
                 )
 
-                category = "neutral"
                 if is_valid_buy or is_valid_inverse:
                     category = "setup"
                 elif is_watch:
                     category = "watch"
+                else:
+                    category = "neutral"
+
                 dashboard_cards.append(
                     _dashboard_card(
                         ticker,
@@ -823,6 +826,15 @@ def scan_market() -> None:
                         category,
                         extra_note=liquidity_note,
                     )
+                )
+
+                print(
+                    f" {ticker} [{sector}]: RS={flags.rs_vs_xiu:+.1f}% "
+                    f"bounce={flags.is_bounce_confirmed} "
+                    f"RVOL={flags.rvol:.2f} ADX={bar.adx:.1f} "
+                    f"slope={'UP' if flags.is_slope_positive else 'DN'} "
+                    f"deep_scan={needs_deep_scan}"
+                    f"{' ILLIQUID' if illiquid else ''}"
                 )
 
                 if illiquid:
@@ -880,7 +892,7 @@ def scan_market() -> None:
                         vix_mult=vix_mult,
                         dynamic_risk_cad=dynamic_risk_cad,
                     )
-                elif fund.earnings_conflict:
+                elif needs_deep_scan and fund.earnings_conflict:
                     print(f" -> [SKIP] {ticker}: {fund.notes}")
                 elif flags.is_macro_bullish and flags.is_in_pullback:
                     print(
@@ -890,9 +902,7 @@ def scan_market() -> None:
                         f"bounce={flags.is_bounce_confirmed} "
                         f"RVOL={flags.rvol:.2f} ADX={bar.adx:.1f} "
                         f"bp={flags.is_bull_bulletproof} "
-                        f"fund={'OK' if fund.passes_fundamentals else 'FAIL'} "
-                        f"news={'OK' if news.headlines_clean else 'HOT'} "
-                        f"dist200={flags.dist_to_200_sma_pct:.2f}%"
+                        f"deep_scan={needs_deep_scan}"
                     )
 
                 time.sleep(TICKER_PAUSE_SEC)
