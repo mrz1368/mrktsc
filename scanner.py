@@ -624,6 +624,7 @@ def _try_dispatch_watch(
         t1_shares=0,
         runner_shares=0,
         risk_cad=0.0,
+        max_limit_price=bar.close + (0.15 * bar.atr),
     )
     result = record_if_allowed(
         conn, ticker, watch_size, cfg.cooldown_days, alert_type=ALERT_WATCH
@@ -718,6 +719,28 @@ def scan_market() -> None:
             macro_regime_is_bull=market_regime == "BULL",
         )
         alerted_sectors = set(active_sectors(conn))
+
+        # Global portfolio heat: block new buys once open risk hits 6.0R.
+        # Free rolls (stop >= entry after 1.5R de-risk) count as 0.0R.
+        MAX_PORTFOLIO_HEAT_R = 6.0
+        current_open_r = 0.0
+        unit_risk = cfg.portfolio_risk_cad
+        if unit_risk > 0:
+            for pos in list_active_positions(conn):
+                risk_per_share = max(0.0, pos.entry_price - pos.current_stop)
+                open_risk_cad = risk_per_share * pos.shares_remaining
+                current_open_r += open_risk_cad / unit_risk
+        heat_veto = current_open_r >= MAX_PORTFOLIO_HEAT_R
+        if heat_veto:
+            print(
+                f" -> [HEAT VETO] Portfolio at {current_open_r:.1f}R open risk. "
+                "New buys blocked."
+            )
+        elif current_open_r > 0:
+            print(
+                f" -> [HEAT] Open portfolio risk: "
+                f"{current_open_r:.1f}R / {MAX_PORTFOLIO_HEAT_R:.0f}R"
+            )
 
         for ticker in TSX_WATCHLIST:
             try:
@@ -842,7 +865,7 @@ def scan_market() -> None:
                     time.sleep(TICKER_PAUSE_SEC)
                     continue
 
-                if is_valid_buy:
+                if is_valid_buy and not heat_veto:
                     if _try_dispatch_buy(
                         conn=conn,
                         cfg=cfg,

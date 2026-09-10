@@ -41,22 +41,37 @@ def get_vix_multiplier() -> tuple[float, float]:
 
 
 def load_benchmark_state() -> BenchmarkState:
-    """XIU 3-month return and 200-day regime (bull vs bear)."""
+    """XIU 3-month return and 200-day regime with 3-day whipsaw hysteresis."""
     empty = BenchmarkState(roc63=0.0, is_bear=False, close=0.0, sma200=0.0)
     try:
         bench_df = yf.Ticker(BENCHMARK_TICKER).history(period="18mo", interval="1d")
         if bench_df.empty or len(bench_df) < 200:
             return empty
         bench_df = add_technical_indicators(bench_df)
+
         last = bench_df.iloc[-1]
         close = float(last["Close"])
         sma200 = float(last["SMA_200"])
+        sma50 = float(last["SMA_50"])
         roc63 = float(last["ROC_63"])
         if math.isnan(roc63):
             roc63 = 0.0
+
+        # Whipsaw hysteresis: require 3 consecutive closes to flip the regime.
+        closes = bench_df["Close"].tail(3)
+        smas = bench_df["SMA_200"].tail(3)
+
+        if (closes < smas).all():
+            is_bear = True
+        elif (closes > smas).all():
+            is_bear = False
+        else:
+            # Mid-whipsaw: 50 SMA vs 200 SMA is the tie-breaker.
+            is_bear = sma50 < sma200
+
         return BenchmarkState(
             roc63=roc63,
-            is_bear=close < sma200,
+            is_bear=is_bear,
             close=close,
             sma200=sma200,
         )

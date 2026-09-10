@@ -20,6 +20,7 @@ class PositionSize:
     t1_shares: int
     runner_shares: int
     risk_cad: float
+    max_limit_price: float
 
 
 def size_position(entry: float, atr: float, risk_cad: float) -> PositionSize | None:
@@ -37,6 +38,8 @@ def size_position(entry: float, atr: float, risk_cad: float) -> PositionSize | N
 
     t1_shares = math.ceil(shares / 3.0)
     runner_shares = shares - t1_shares
+    # Do not pay more than 15% of ATR above yesterday's close.
+    max_limit = entry + (0.15 * atr)
 
     return PositionSize(
         entry=entry,
@@ -48,4 +51,5 @@ def size_position(entry: float, atr: float, risk_cad: float) -> PositionSize | N
         t1_shares=t1_shares,
         runner_shares=runner_shares,
         risk_cad=risk_cad,
+        max_limit_price=max_limit,
     )

@@ -59,8 +59,20 @@ def evaluate_institutional_exit(
     sma50 = float(df_daily["Close"].rolling(50).mean().iloc[-1])
     bars_held = int(position["bars_held"]) + 1
 
+    # Neutralize ex-dividend accounting drops so cash dividends don't trip stops.
+    dividend_paid = (
+        float(df_daily["Dividends"].iloc[-1])
+        if "Dividends" in df_daily.columns
+        else 0.0
+    )
+    if dividend_paid > 0:
+        current_stop = max(0.0, current_stop - dividend_paid)
+        initial_stop = max(0.0, initial_stop - dividend_paid)
+
     updated_pos = dict(position)
     updated_pos["bars_held"] = bars_held
+    updated_pos["current_stop"] = current_stop
+    updated_pos["initial_stop"] = initial_stop
 
     def _signal(
         action: ExitAction,
