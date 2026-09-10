@@ -86,11 +86,14 @@
     </header>
 
     <!-- Filter Buttons -->
+    {% set setup_n = cards | selectattr('category', 'equalto', 'setup') | list | length %}
+    {% set watch_n = cards | selectattr('category', 'equalto', 'watch') | list | length %}
+    {% set neutral_n = cards | selectattr('category', 'equalto', 'neutral') | list | length %}
     <div class="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
       <button id="btn-all" onclick="filterCards('all')" class="filter-btn px-3.5 py-1.5 rounded-lg font-medium bg-blue-600 text-white transition">All Watchlist ({{ cards|length }})</button>
-      <button id="btn-setup" onclick="filterCards('setup')" class="filter-btn px-3.5 py-1.5 rounded-lg font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 transition">Actionable Setups</button>
-      <button id="btn-watch" onclick="filterCards('watch')" class="filter-btn px-3.5 py-1.5 rounded-lg font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 transition">Watchlist Radar</button>
-      <button id="btn-neutral" onclick="filterCards('neutral')" class="filter-btn px-3.5 py-1.5 rounded-lg font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 transition">Filtered Out</button>
+      <button id="btn-setup" onclick="filterCards('setup')" class="filter-btn px-3.5 py-1.5 rounded-lg font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 transition">Actionable Setups ({{ setup_n }})</button>
+      <button id="btn-watch" onclick="filterCards('watch')" class="filter-btn px-3.5 py-1.5 rounded-lg font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 transition">Watchlist Radar ({{ watch_n }})</button>
+      <button id="btn-neutral" onclick="filterCards('neutral')" class="filter-btn px-3.5 py-1.5 rounded-lg font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 transition">Filtered Out ({{ neutral_n }})</button>
     </div>
 
     <!-- Cards Grid -->
@@ -104,13 +107,14 @@
             <div class="flex items-center gap-2">
               <h2 class="text-lg font-bold text-white font-mono">
                 <a
-                  href="https://finance.yahoo.com/quote/{{ card.ticker }}/"
+                  href="https://finance.yahoo.com/chart/{{ card.ticker }}"
                   target="_blank"
                   rel="noopener noreferrer"
-                  class="hover:text-blue-400 hover:underline transition flex items-center gap-1"
+                  title="Open {{ card.ticker }} chart on Yahoo Finance"
+                  class="hover:text-blue-400 hover:underline transition inline-flex items-center gap-1"
                 >
                   {{ card.ticker }}
-                  <svg class="w-3.5 h-3.5 opacity-60 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-3.5 h-3.5 opacity-60 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
                   </svg>
                 </a>
@@ -152,11 +156,67 @@
           </div>
           {% else %}
           <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Technical Gates</div>
-          <div class="flex justify-between"><span>Trend (ADX):</span><span class="font-mono">{{ '✅' if card.adx >= 25 else '❌' }} {{ "%.1f"|format(card.adx) }}</span></div>
-          <div class="flex justify-between"><span>Relative Volume (RVOL):</span><span class="font-mono">{{ '✅' if card.rvol >= 1.0 else '❌' }} {{ "%.2f"|format(card.rvol) }}x</span></div>
-          <div class="flex justify-between"><span>50 SMA Slope:</span><span class="font-mono">{{ '✅' if card.sma50_slope > 0 else '❌' }} {{ "%+.2f"|format(card.sma50_slope) }}%</span></div>
-          <div class="flex justify-between"><span>RS vs XIU.TO:</span><span class="font-mono">{{ '✅' if card.rs_vs_xiu > 0 else '❌' }} {{ "%+.1f"|format(card.rs_vs_xiu) }}%</span></div>
-          <div class="flex justify-between"><span>Pullback to 50 SMA:</span><span class="font-mono">{{ "%.2f"|format(card.pullback_pct) }}%</span></div>
+
+          {# ADX #}
+          {% set adx_pass = card.adx >= 25 %}
+          <div class="flex justify-between items-start gap-3">
+            <span class="text-slate-400">Trend (ADX):</span>
+            <span class="font-mono text-right leading-tight {{ 'text-emerald-400' if adx_pass else 'text-rose-400/85' }}">
+              {{ '✔' if adx_pass else '✘' }} {{ "%.1f"|format(card.adx) }}
+              <span class="block text-[10px] font-sans {{ 'text-emerald-400/70' if adx_pass else 'text-rose-400/55' }}">
+                {% if card.adx >= 40 %}strong trend{% elif adx_pass %}trending{% elif card.adx < 20 %}choppy / no trend{% else %}weak trend{% endif %}
+              </span>
+            </span>
+          </div>
+
+          {# RVOL #}
+          {% set rvol_pass = card.rvol >= 1.0 %}
+          {% set rvol_hot = card.rvol >= 2.0 %}
+          <div class="flex justify-between items-start gap-3">
+            <span class="text-slate-400">Relative Volume (RVOL):</span>
+            <span class="font-mono text-right leading-tight {% if rvol_hot %}text-emerald-300 drop-shadow-[0_0_8px_rgba(52,211,153,0.65)]{% elif rvol_pass %}text-emerald-400{% else %}text-rose-400/85{% endif %}">
+              {{ '✔' if rvol_pass else '✘' }} {{ "%.2f"|format(card.rvol) }}x
+              <span class="block text-[10px] font-sans {% if rvol_hot %}text-emerald-300/80{% elif rvol_pass %}text-emerald-400/70{% else %}text-rose-400/55{% endif %}">
+                {% if rvol_hot %}explosive institutional flow{% elif rvol_pass %}institutional participation{% else %}light volume{% endif %}
+              </span>
+            </span>
+          </div>
+
+          {# 50 SMA Slope #}
+          {% set slope_pass = card.sma50_slope > 0 %}
+          <div class="flex justify-between items-start gap-3">
+            <span class="text-slate-400">50 SMA Slope:</span>
+            <span class="font-mono text-right leading-tight {{ 'text-emerald-400' if slope_pass else 'text-rose-400/85' }}">
+              {{ '✔' if slope_pass else '✘' }} {{ "%+.2f"|format(card.sma50_slope) }}%
+              <span class="block text-[10px] font-sans {{ 'text-emerald-400/70' if slope_pass else 'text-rose-400/55' }}">
+                {% if card.sma50_slope >= 0.5 %}5d accelerating{% elif slope_pass %}5d rising{% elif card.sma50_slope <= -0.5 %}5d decelerating{% else %}5d flattening{% endif %}
+              </span>
+            </span>
+          </div>
+
+          {# RS vs XIU #}
+          {% set rs_pass = card.rs_vs_xiu > 0 %}
+          <div class="flex justify-between items-start gap-3">
+            <span class="text-slate-400">RS vs XIU.TO:</span>
+            <span class="font-mono text-right leading-tight {{ 'text-emerald-400' if rs_pass else 'text-rose-400/85' }}">
+              {{ '✔' if rs_pass else '✘' }} {{ "%+.1f"|format(card.rs_vs_xiu) }}%
+              <span class="block text-[10px] font-sans {{ 'text-emerald-400/70' if rs_pass else 'text-rose-400/55' }}">
+                {% if card.rs_vs_xiu >= 5 %}strong leader{% elif rs_pass %}outperforming{% elif card.rs_vs_xiu <= -5 %}hard laggard{% else %}lagging{% endif %}
+              </span>
+            </span>
+          </div>
+
+          {# Pullback location #}
+          {% set pb_ok = card.pullback_pct <= 2.5 %}
+          <div class="flex justify-between items-start gap-3">
+            <span class="text-slate-400">Pullback to 50 SMA:</span>
+            <span class="font-mono text-right leading-tight {{ 'text-sky-400' if pb_ok else 'text-amber-400/90' }}">
+              {{ "%.2f"|format(card.pullback_pct) }}%
+              <span class="block text-[10px] font-sans {{ 'text-sky-400/70' if pb_ok else 'text-amber-400/60' }}">
+                {% if pb_ok %}in entry zone{% else %}extended vs 50 SMA{% endif %}
+              </span>
+            </span>
+          </div>
           {% endif %}
         </div>
 
