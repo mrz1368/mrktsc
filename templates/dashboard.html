@@ -132,12 +132,32 @@
 
         <!-- Technical Diagnostics -->
         <div class="space-y-1.5 text-xs bg-slate-900/60 p-3 rounded-lg border border-slate-800">
+          {% if card.category == 'watch' %}
+          <div class="text-[11px] font-semibold text-amber-400/90 uppercase tracking-wider mb-1">Monitoring: 200-Day SMA Base</div>
+          <div class="flex justify-between gap-3">
+            <span class="text-slate-400">Major Support (200 SMA):</span>
+            <span class="font-mono text-slate-100 text-right">${{ "%.2f"|format(card.sma200) }} <span class="text-slate-400">({{ "%.1f"|format(card.dist_to_200_pct) }}% away)</span></span>
+          </div>
+          <div class="flex justify-between gap-3">
+            <span class="text-slate-400">Reclaim Trigger (50 SMA):</span>
+            <span class="font-mono text-slate-100 text-right">Close &gt; ${{ "%.2f"|format(card.sma50) }}</span>
+          </div>
+          <div class="flex justify-between gap-3">
+            <span class="text-slate-400">Invalidation Level:</span>
+            <span class="font-mono text-rose-400 text-right">${{ "%.2f"|format(card.invalidation_price) }}</span>
+          </div>
+          <div class="flex justify-between gap-3">
+            <span class="text-slate-400">Status:</span>
+            <span class="italic text-slate-300 text-right">Awaiting bounce confirmation wick</span>
+          </div>
+          {% else %}
           <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Technical Gates</div>
           <div class="flex justify-between"><span>Trend (ADX):</span><span class="font-mono">{{ '✅' if card.adx >= 25 else '❌' }} {{ "%.1f"|format(card.adx) }}</span></div>
           <div class="flex justify-between"><span>Relative Volume (RVOL):</span><span class="font-mono">{{ '✅' if card.rvol >= 1.0 else '❌' }} {{ "%.2f"|format(card.rvol) }}x</span></div>
           <div class="flex justify-between"><span>50 SMA Slope:</span><span class="font-mono">{{ '✅' if card.sma50_slope > 0 else '❌' }} {{ "%+.2f"|format(card.sma50_slope) }}%</span></div>
           <div class="flex justify-between"><span>RS vs XIU.TO:</span><span class="font-mono">{{ '✅' if card.rs_vs_xiu > 0 else '❌' }} {{ "%+.1f"|format(card.rs_vs_xiu) }}%</span></div>
           <div class="flex justify-between"><span>Pullback to 50 SMA:</span><span class="font-mono">{{ "%.2f"|format(card.pullback_pct) }}%</span></div>
+          {% endif %}
         </div>
 
         <!-- Fundamental Diagnostics -->
