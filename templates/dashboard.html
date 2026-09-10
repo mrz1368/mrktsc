@@ -160,17 +160,25 @@
           {% endif %}
         </div>
 
-        <!-- Fundamental Diagnostics -->
-        <div class="space-y-1.5 text-xs bg-slate-900/60 p-3 rounded-lg border border-slate-800">
-          <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Fundamental &amp; Risk Gates</div>
-          <div class="flex justify-between"><span>Debt Service:</span><span class="font-mono">{{ '✅ Safe' if card.debt_safe else '❌ Failed' }}</span></div>
-          <div class="flex justify-between"><span>Cash Flow:</span><span class="font-mono">{{ '✅ Positive' if card.fcf_positive else '❌ Negative' }}</span></div>
-          <div class="flex justify-between"><span>Earnings Blackout:</span><span class="font-mono">{{ '❌ Warning' if card.earnings_conflict else '✅ Clear' }}</span></div>
-          <div class="flex justify-between"><span>News Velocity:</span><span class="font-mono">{{ '✅ Clear' if card.headlines_clean else '❌ Flagged' }}</span></div>
+        <!-- Compact Risk & Catalyst Summary -->
+        <div class="flex flex-wrap gap-1.5 text-[11px]">
+          {% if card.category == 'setup' or card.category == 'watch' %}
+          <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">🛡️ Fundamentals: Verified</span>
+          <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-slate-800 text-slate-300 border border-slate-700">📰 News: Clean</span>
+          {% elif card.earnings_conflict %}
+          <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-rose-500/15 text-rose-400 border border-rose-500/30">⚠️ Blocked: Earnings Blackout</span>
+          {% elif not card.debt_safe or not card.fcf_positive %}
+          <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-rose-500/15 text-rose-400 border border-rose-500/30">⚠️ Blocked: Fundamental Quality</span>
+          {% elif not card.headlines_clean %}
+          <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-amber-500/15 text-amber-400 border border-amber-500/30">⚠️ Blocked: Negative Headline Cycle</span>
+          {% else %}
+          <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-slate-800/80 text-slate-500 border border-slate-700/80">⚡ Fundamentals: Skipped (Tech Failed)</span>
+          {% endif %}
         </div>
 
-        <!-- Health Note -->
+        {% if card.fund_notes and not card.fund_notes.startswith('Skipped API Fetch') %}
         <p class="text-[11px] text-slate-400 italic truncate" title="{{ card.fund_notes }}">Note: {{ card.fund_notes }}</p>
+        {% endif %}
 
       </div>
       {% endfor %}
