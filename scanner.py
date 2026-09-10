@@ -372,10 +372,21 @@ def _build_alert_context(
     )
 
 
+def _daily_change_pct(df: pd.DataFrame, close: float) -> float:
+    """Percent change vs prior session close."""
+    if len(df) < 2 or "Close" not in df.columns:
+        return 0.0
+    prev_close = float(df["Close"].iloc[-2])
+    if prev_close <= 0:
+        return 0.0
+    return ((close - prev_close) / prev_close) * 100.0
+
+
 def _dashboard_card(
     ticker: str,
     sector: str,
     bar: BarSnapshot,
+    df: pd.DataFrame,
     flags: SetupFlags,
     fund: FundamentalsResult,
     news: NewsVelocityResult,
@@ -389,6 +400,7 @@ def _dashboard_card(
         "ticker": ticker,
         "sector": sector,
         "close": bar.close,
+        "change_pct": _daily_change_pct(df, bar.close),
         "category": category,
         "adx": bar.adx,
         "rvol": flags.rvol,
@@ -397,6 +409,11 @@ def _dashboard_card(
         "sma50_slope": bar.sma_50_slope,
         "rs_vs_xiu": flags.rs_vs_xiu,
         "pullback_pct": flags.pullback_pct,
+        # Signed: + above 50 SMA, − below (pullback_pct is abs-only).
+        "dist_to_50_pct": (
+            ((bar.close - bar.sma_50) / bar.sma_50) * 100.0 if bar.sma_50 > 0 else 0.0
+        ),
+        "above_sma50": bar.close >= bar.sma_50,
         "dist_to_200_pct": flags.dist_to_200_sma_pct,
         "invalidation_price": bar.sma_200 * 0.985,
         "debt_safe": fund.debt_safe,
@@ -407,11 +424,17 @@ def _dashboard_card(
     }
 
 
-def _skipped_dashboard_card(ticker: str, reason: str, close: float = 0.0) -> dict:
+def _skipped_dashboard_card(
+    ticker: str,
+    reason: str,
+    close: float = 0.0,
+    change_pct: float = 0.0,
+) -> dict:
     return {
         "ticker": ticker,
         "sector": ticker_sector(ticker),
         "close": close,
+        "change_pct": change_pct,
         "category": "neutral",
         "adx": 0.0,
         "rvol": 0.0,
@@ -420,6 +443,8 @@ def _skipped_dashboard_card(ticker: str, reason: str, close: float = 0.0) -> dic
         "sma50_slope": 0.0,
         "rs_vs_xiu": 0.0,
         "pullback_pct": 0.0,
+        "dist_to_50_pct": 0.0,
+        "above_sma50": False,
         "dist_to_200_pct": 0.0,
         "invalidation_price": 0.0,
         "debt_safe": False,
@@ -764,7 +789,12 @@ def scan_market() -> None:
                     print(f" -> [SKIP] {ticker}: {reason}")
                     close = float(df["Close"].iloc[-1]) if "Close" in df.columns else 0.0
                     dashboard_cards.append(
-                        _skipped_dashboard_card(ticker, reason, close=close)
+                        _skipped_dashboard_card(
+                            ticker,
+                            reason,
+                            close=close,
+                            change_pct=_daily_change_pct(df, close),
+                        )
                     )
                     continue
 
@@ -851,6 +881,7 @@ def scan_market() -> None:
                         ticker,
                         sector,
                         bar,
+                        df,
                         flags,
                         fund,
                         news,

@@ -121,7 +121,17 @@
               </h2>
               <span class="text-[10px] uppercase font-semibold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">{{ card.sector }}</span>
             </div>
-            <p class="text-xs text-slate-400 mt-0.5">${{ "%.2f"|format(card.close) }} CAD</p>
+            <div class="flex items-baseline gap-2 mt-0.5">
+              <span class="text-sm font-semibold text-white font-mono">${{ "%.2f"|format(card.close) }} CAD</span>
+              {% set ch = card.change_pct|default(0) %}
+              {% if ch > 0 %}
+              <span class="text-[11px] font-medium font-mono px-1.5 py-0.5 rounded text-emerald-400 bg-emerald-500/10">+{{ "%.2f"|format(ch) }}%</span>
+              {% elif ch < 0 %}
+              <span class="text-[11px] font-medium font-mono px-1.5 py-0.5 rounded text-rose-400 bg-rose-500/10">{{ "%.2f"|format(ch) }}%</span>
+              {% else %}
+              <span class="text-[11px] font-medium font-mono px-1.5 py-0.5 rounded text-slate-400 bg-slate-500/10">0.00%</span>
+              {% endif %}
+            </div>
           </div>
           <div>
             {% if card.category == 'setup' %}
@@ -144,7 +154,16 @@
           </div>
           <div class="flex justify-between gap-3">
             <span class="text-slate-400">Reclaim Trigger (50 SMA):</span>
-            <span class="font-mono text-slate-100 text-right">Close &gt; ${{ "%.2f"|format(card.sma50) }}</span>
+            <span class="font-mono text-slate-100 text-right leading-tight">
+              Close &gt; ${{ "%.2f"|format(card.sma50) }}
+              <span class="block text-[10px] font-sans {{ 'text-emerald-400/80' if card.above_sma50 else 'text-amber-400/90' }}">
+                {% if card.above_sma50 %}
+                Currently ABOVE 50 SMA ({{ "%+.2f"|format(card.dist_to_50_pct) }}%)
+                {% else %}
+                Currently BELOW 50 SMA ({{ "%+.2f"|format(card.dist_to_50_pct) }}%)
+                {% endif %}
+              </span>
+            </span>
           </div>
           <div class="flex justify-between gap-3">
             <span class="text-slate-400">Invalidation Level:</span>
@@ -206,14 +225,22 @@
             </span>
           </div>
 
-          {# Pullback location #}
-          {% set pb_ok = card.pullback_pct <= 2.5 %}
+          {# Price vs 50 SMA (signed) #}
+          {% set above50 = card.above_sma50 %}
+          {% set d50 = card.dist_to_50_pct|default(0) %}
+          {% set pb_ok = above50 and (d50|abs) <= 2.5 %}
           <div class="flex justify-between items-start gap-3">
-            <span class="text-slate-400">Pullback to 50 SMA:</span>
-            <span class="font-mono text-right leading-tight {{ 'text-sky-400' if pb_ok else 'text-amber-400/90' }}">
-              {{ "%.2f"|format(card.pullback_pct) }}%
-              <span class="block text-[10px] font-sans {{ 'text-sky-400/70' if pb_ok else 'text-amber-400/60' }}">
-                {% if pb_ok %}in entry zone{% else %}extended vs 50 SMA{% endif %}
+            <span class="text-slate-400">Price vs 50 SMA:</span>
+            <span class="font-mono text-right leading-tight {{ 'text-emerald-400' if above50 else 'text-rose-400/85' }}">
+              {{ 'ABOVE' if above50 else 'BELOW' }} {{ "%+.2f"|format(d50) }}%
+              <span class="block text-[10px] font-sans {{ 'text-sky-400/80' if pb_ok else ('text-emerald-400/70' if above50 else 'text-rose-400/55') }}">
+                {% if pb_ok %}
+                in pullback entry zone (≤2.5% above)
+                {% elif above50 %}
+                extended above 50 SMA (${{ "%.2f"|format(card.sma50) }})
+                {% else %}
+                trading under 50 SMA (${{ "%.2f"|format(card.sma50) }})
+                {% endif %}
               </span>
             </span>
           </div>
