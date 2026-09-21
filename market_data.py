@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from typing import TypeVar
 
 import pandas as pd
@@ -18,6 +18,19 @@ RATE_LIMIT_BACKOFFS = (5.0, 15.0, 30.0)
 
 # Rate limits plus connection/timeout style failures that often recover.
 _RETRYABLE = (YFRateLimitError, ConnectionError, TimeoutError, OSError)
+
+# Columns we keep when unwrapping a batch download frame.
+_PRICE_COLS = (
+    "Open",
+    "High",
+    "Low",
+    "Close",
+    "Adj Close",
+    "Volume",
+    "Dividends",
+    "Stock Splits",
+    "Capital Gains",
+)
 
 
 def with_yahoo_retries(label: str, fn: Callable[[], T]) -> T:
@@ -49,17 +62,154 @@ def call_ticker(label: str, symbol: str, fn: Callable[[yf.Ticker], T]) -> T:
     return with_yahoo_retries(label, lambda: fn(ticker_obj))
 
 
+def _normalize_history_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Clean one ticker's OHLCV frame: drop NaN closes, flatten accidental MultiIndex."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    out = df.copy()
+    if isinstance(out.columns, pd.MultiIndex):
+        # Single-ticker download sometimes leaves a redundant level.
+        if out.columns.nlevels == 2:
+            level0 = {str(v) for v in out.columns.get_level_values(0)}
+            level1 = {str(v) for v in out.columns.get_level_values(1)}
+            if level0 & set(_PRICE_COLS) and not (level1 & set(_PRICE_COLS)):
+                out.columns = out.columns.get_level_values(0)
+            elif level1 & set(_PRICE_COLS) and not (level0 & set(_PRICE_COLS)):
+                out.columns = out.columns.get_level_values(1)
+            else:
+                flat = out.columns.to_flat_index()
+                out.columns = [c[-1] if isinstance(c, tuple) else c for c in flat]
+        else:
+            flat = out.columns.to_flat_index()
+            out.columns = [c[-1] if isinstance(c, tuple) else c for c in flat]
+
+    out.columns = [str(c) for c in out.columns]
+    if "Close" not in out.columns:
+        return pd.DataFrame()
+
+    out = out.loc[out["Close"].notna()].copy()
+    if out.empty:
+        return pd.DataFrame()
+    return out
+
+
+def frames_from_download(
+    raw: pd.DataFrame | None,
+    tickers: Sequence[str],
+) -> dict[str, pd.DataFrame]:
+    """Split a ``yf.download`` result into ``{ticker: DataFrame}``.
+
+    Handles single-ticker flat columns, MultiIndex ``group_by='ticker'``
+    (Ticker, Price), and ``group_by='column'`` (Price, Ticker). Missing or
+    empty tickers map to an empty DataFrame.
+    """
+    ordered = list(dict.fromkeys(str(t).strip() for t in tickers if t and str(t).strip()))
+    result: dict[str, pd.DataFrame] = {t: pd.DataFrame() for t in ordered}
+    if not ordered or raw is None or raw.empty:
+        return result
+
+    ticker_set = set(ordered)
+
+    if not isinstance(raw.columns, pd.MultiIndex):
+        if len(ordered) == 1:
+            result[ordered[0]] = _normalize_history_frame(raw)
+        return result
+
+    level0 = [str(v) for v in raw.columns.get_level_values(0)]
+    level1 = [str(v) for v in raw.columns.get_level_values(1)]
+    level0_tickers = ticker_set & set(level0)
+    level1_tickers = ticker_set & set(level1)
+
+    if level0_tickers and not level1_tickers:
+        # group_by='ticker' → columns (Ticker, Price)
+        for t in ordered:
+            if t not in raw.columns.get_level_values(0):
+                continue
+            try:
+                sub = raw[t]
+            except (KeyError, TypeError, ValueError):
+                continue
+            if isinstance(sub, pd.Series):
+                sub = sub.to_frame()
+            result[t] = _normalize_history_frame(sub)
+        return result
+
+    if level1_tickers:
+        # group_by='column' → columns (Price, Ticker)
+        for t in ordered:
+            if t not in set(level1):
+                continue
+            try:
+                sub = raw.xs(t, axis=1, level=1)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if isinstance(sub, pd.Series):
+                sub = sub.to_frame()
+            result[t] = _normalize_history_frame(sub)
+        return result
+
+    # Ambiguous / unexpected MultiIndex — best-effort single-ticker unwrap.
+    if len(ordered) == 1:
+        result[ordered[0]] = _normalize_history_frame(raw)
+    return result
+
+
 def fetch_history(
     ticker: str,
     *,
     period: str = "18mo",
     interval: str = "1d",
 ) -> pd.DataFrame:
-    """OHLCV history for ``ticker`` with standardized retries."""
+    """OHLCV history for ``ticker`` with standardized retries.
+
+    Prefer :func:`fetch_history_batch` when screening many symbols.
+    """
     return with_yahoo_retries(
         ticker,
         lambda: get_ticker(ticker).history(period=period, interval=interval),
     )
+
+
+def fetch_history_batch(
+    tickers: Iterable[str],
+    *,
+    period: str = "18mo",
+    interval: str = "1d",
+) -> dict[str, pd.DataFrame]:
+    """Batch-download OHLCV (+ dividends/splits) via ``yf.download``.
+
+    Returns ``{ticker: DataFrame}`` for every requested symbol. Missing or
+    empty Yahoo series map to an empty DataFrame (caller soft-skips).
+
+    Matches ``Ticker.history`` defaults used elsewhere: ``auto_adjust=True``
+    and ``actions=True`` so exits still see a ``Dividends`` column.
+    """
+    ordered = list(dict.fromkeys(str(t).strip() for t in tickers if t and str(t).strip()))
+    if not ordered:
+        return {}
+
+    label = f"batch[{len(ordered)}]"
+    download_arg: str | list[str] = ordered[0] if len(ordered) == 1 else list(ordered)
+
+    def _download() -> pd.DataFrame:
+        raw = yf.download(
+            download_arg,
+            period=period,
+            interval=interval,
+            group_by="ticker",
+            auto_adjust=True,
+            actions=True,
+            threads=True,
+            progress=False,
+            timeout=30,
+        )
+        if raw is None:
+            return pd.DataFrame()
+        return raw
+
+    raw = with_yahoo_retries(label, _download)
+    return frames_from_download(raw, ordered)
 
 
 def fetch_vix_history(*, period: str = "5d") -> pd.DataFrame:

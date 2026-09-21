@@ -42,7 +42,7 @@ from indicators import (
 from market_data import (
     RATE_LIMIT_BACKOFFS,
     call_ticker,
-    fetch_history,
+    fetch_history_batch,
 )
 from regime import get_vix_multiplier, load_benchmark_state, load_inverse_quote
 from sentiment import (
@@ -111,10 +111,21 @@ def _confirm_pending_opens(conn: sqlite3.Connection) -> None:
         return
 
     print(f" -> [FILLS] Confirming {len(pending)} pending open order(s).")
+    tickers = [pos.ticker for pos in pending]
+    try:
+        histories = fetch_history_batch(tickers, period="10d")
+    except YFRateLimitError as exc:
+        print(f" -> [FILL ERROR] batch history: Yahoo rate limit after retries: {exc}")
+        time.sleep(RATE_LIMIT_BACKOFFS[-1])
+        return
+    except (ValueError, TypeError, KeyError, IndexError, OSError, RuntimeError) as exc:
+        print(f" -> [FILL ERROR] batch history: {exc}")
+        return
+
     for pos in pending:
         ticker = pos.ticker
         try:
-            df = fetch_history(ticker, period="10d")
+            df = histories.get(ticker, pd.DataFrame())
             if df.empty or "Open" not in df.columns:
                 print(f" -> [FILL SKIP] {ticker}: no open print available yet.")
                 continue
@@ -162,10 +173,6 @@ def _confirm_pending_opens(conn: sqlite3.Connection) -> None:
                 f"open ${fill_price:.2f} ({gap_pct:+.2f}%) | "
                 f"stop ${confirmed.initial_stop:.2f}"
             )
-            time.sleep(TICKER_PAUSE_SEC)
-        except YFRateLimitError as exc:
-            print(f" -> [FILL ERROR] {ticker}: Yahoo rate limit after retries: {exc}")
-            time.sleep(RATE_LIMIT_BACKOFFS[-1])
         except (
             ValueError,
             TypeError,
@@ -193,10 +200,21 @@ def _manage_open_positions(
 
     inverse_vehicles = set(SECTOR_INVERSE_MAP.values())
     print(f" -> [EXITS] Evaluating {len(positions)} open position(s).")
+    tickers = [pos.ticker for pos in positions]
+    try:
+        histories = fetch_history_batch(tickers, period="6mo")
+    except YFRateLimitError as exc:
+        print(f" -> [EXIT ERROR] batch history: Yahoo rate limit after retries: {exc}")
+        time.sleep(RATE_LIMIT_BACKOFFS[-1])
+        return
+    except (ValueError, TypeError, KeyError, IndexError, OSError, RuntimeError) as exc:
+        print(f" -> [EXIT ERROR] batch history: {exc}")
+        return
+
     for pos in positions:
         ticker = pos.ticker
         try:
-            df = fetch_history(ticker, period="6mo")
+            df = histories.get(ticker, pd.DataFrame())
             if df.empty or len(df) < 50:
                 print(f" -> [EXIT SKIP] {ticker}: insufficient history for exit gates.")
                 continue
@@ -209,6 +227,7 @@ def _manage_open_positions(
                     ticker,
                     days_to_next_earnings,
                 )
+                time.sleep(TICKER_PAUSE_SEC)
             signal, updated = evaluate_institutional_exit(
                 _position_as_dict(pos),
                 df,
@@ -305,7 +324,6 @@ def _manage_open_positions(
                     f" -> [EXIT] {ticker}: {signal.action.value} "
                     f"sold {signal.shares_to_sell} @ ${signal.exit_price:.2f}"
                 )
-            time.sleep(TICKER_PAUSE_SEC)
         except YFRateLimitError as exc:
             print(f" -> [EXIT ERROR] {ticker}: Yahoo rate limit after retries: {exc}")
             time.sleep(RATE_LIMIT_BACKOFFS[-1])
@@ -656,10 +674,37 @@ def scan_market() -> None:
         if heat.log_line is not None:
             print(heat.log_line)
 
-        for ticker in TSX_WATCHLIST:
+        print(f" -> [BATCH] Downloading OHLCV for {len(TSX_WATCHLIST)} tickers...")
+        batch_ok = True
+        try:
+            histories = fetch_history_batch(TSX_WATCHLIST)
+        except YFRateLimitError as exc:
+            reason = f"Yahoo rate limit after retries: {exc}"
+            print(f" -> [BATCH ERROR] {reason}")
+            for ticker in TSX_WATCHLIST:
+                dashboard_cards.append(skipped_dashboard_card(ticker, reason))
+            histories = {}
+            batch_ok = False
+            time.sleep(RATE_LIMIT_BACKOFFS[-1])
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            IndexError,
+            OSError,
+            RuntimeError,
+        ) as exc:
+            reason = f"Batch history error: {exc}"
+            print(f" -> [BATCH ERROR] {reason}")
+            for ticker in TSX_WATCHLIST:
+                dashboard_cards.append(skipped_dashboard_card(ticker, reason))
+            histories = {}
+            batch_ok = False
+
+        for ticker in TSX_WATCHLIST if batch_ok else ():
             try:
-                # 1. Price history first (1 Yahoo call per ticker).
-                df = fetch_history(ticker)
+                # 1. In-memory OHLCV from the batch download.
+                df = histories.get(ticker, pd.DataFrame())
                 if df.empty:
                     reason = "No price history from Yahoo."
                     print(f" -> [SKIP] {ticker}: {reason}")
@@ -707,6 +752,7 @@ def scan_market() -> None:
                         ticker,
                         evaluate_news_velocity,
                     )
+                    time.sleep(TICKER_PAUSE_SEC)
                 else:
                     fund = dummy_fund
                     news = dummy_news
@@ -744,7 +790,6 @@ def scan_market() -> None:
 
                 if illiquid:
                     print(f" -> [SKIP] {ticker}: {liquidity_note}")
-                    time.sleep(TICKER_PAUSE_SEC)
                     continue
 
                 if armed.is_valid_buy and not heat.veto:
@@ -809,8 +854,6 @@ def scan_market() -> None:
                         f"bp={flags.is_bull_bulletproof} "
                         f"deep_scan={tech.needs_deep_scan}"
                     )
-
-                time.sleep(TICKER_PAUSE_SEC)
 
             except YFRateLimitError as exc:
                 reason = f"Yahoo rate limit after retries: {exc}"
