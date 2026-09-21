@@ -170,14 +170,17 @@ def try_dispatch_buy(
         pullback_pct=flags.pullback_pct,
         candle_confirmed=flags.is_bounce_confirmed,
     )
-    send_html_message(
+    sent = send_html_message(
         cfg.telegram_bot_token,
         cfg.telegram_chat_id,
         format_setup_html(size, ctx),
         context=f"setup {ticker}",
     )
+    # Book still opens if Telegram fails — send_html_message never raises.
     open_active_position(conn, ticker=ticker, size=size, sector=sector)
     alerted_sectors.add(sector)
+    if not sent:
+        print(f" -> [TELEGRAM] setup {ticker}: alert not delivered; PENDING_OPEN still booked.")
     print(
         f" -> [POSITION SETUP] {ticker} [{sector}] PENDING_OPEN "
         f"@ signal ${size.entry:.2f} | risk ${dynamic_risk_cad:.0f} | sell {CASH_ETF}."
@@ -261,7 +264,7 @@ def try_dispatch_inverse(
         pullback_pct=flags.pullback_pct,
         candle_confirmed=flags.is_rejection_confirmed,
     )
-    send_html_message(
+    sent = send_html_message(
         cfg.telegram_bot_token,
         cfg.telegram_chat_id,
         format_inverse_html(size, ctx, inverse_ticker=inverse_ticker),
@@ -270,6 +273,11 @@ def try_dispatch_inverse(
     open_active_position(conn, ticker=inverse_ticker, size=size, sector=sector)
     alerted_sectors.add(sector)
     alerted_vehicles.add(inverse_ticker)
+    if not sent:
+        print(
+            f" -> [TELEGRAM] inverse {inverse_ticker}: alert not delivered; "
+            "PENDING_OPEN still booked."
+        )
     print(
         f" -> [INVERSE SETUP] BUY {inverse_ticker} via {ticker} [{sector}] "
         f"PENDING_OPEN @ signal ${size.entry:.2f} "
@@ -325,7 +333,7 @@ def try_dispatch_watch(
         pullback_pct=flags.pullback_below_pct,
         candle_confirmed=flags.is_bounce_confirmed,
     )
-    send_html_message(
+    sent = send_html_message(
         cfg.telegram_bot_token,
         cfg.telegram_chat_id,
         format_watchlist_html(
@@ -335,4 +343,7 @@ def try_dispatch_watch(
         ),
         context=f"watch {ticker}",
     )
-    print(f" -> [WATCHLIST RADAR] {ticker} sent to Telegram.")
+    if sent:
+        print(f" -> [WATCHLIST RADAR] {ticker} sent to Telegram.")
+    else:
+        print(f" -> [WATCHLIST RADAR] {ticker}: Telegram send failed; scan continues.")

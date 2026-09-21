@@ -220,6 +220,7 @@ def _manage_open_positions(
             elif signal.action == ExitAction.PARTIAL_SCALE:
                 remaining = int(updated["shares_remaining"])
                 if remaining <= 0:
+                    # Telegram False is non-fatal — book update always proceeds.
                     send_html_message(
                         cfg.telegram_bot_token,
                         cfg.telegram_chat_id,
@@ -546,7 +547,7 @@ def scan_market() -> None:
                 dashboard_cards.append(skipped_dashboard_card(ticker, f"Scan error: {exc}"))
 
         if setups_dispatched == 0:
-            send_html_message(
+            sent = send_html_message(
                 cfg.telegram_bot_token,
                 cfg.telegram_chat_id,
                 format_idle_cash_html(
@@ -557,10 +558,16 @@ def scan_market() -> None:
                 ),
                 context="idle cash",
             )
-            print(f" -> [IDLE CASH] No setups. Remain 100% in {CASH_ETF}.")
+            if sent:
+                print(f" -> [IDLE CASH] No setups. Remain 100% in {CASH_ETF}.")
+            else:
+                print(
+                    f" -> [IDLE CASH] No setups. Remain 100% in {CASH_ETF} "
+                    "(Telegram idle alert not delivered)."
+                )
 
         generate_dashboard(
-            cards=[card.to_template_dict() for card in dashboard_cards],
+            cards=dashboard_cards,
             regime=market_regime,
             vix_val=vix_close,
             vix_mult=vix_mult,

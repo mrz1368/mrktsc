@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 import thresholds
-from cards import daily_change_pct, dashboard_card, skipped_dashboard_card
+from cards import DashboardCard, daily_change_pct, dashboard_card, skipped_dashboard_card
+from dashboard import generate_dashboard
 from fundamentals import FundamentalsResult
 from indicators import BarSnapshot, SetupFlags
 from sentiment import NewsVelocityResult
@@ -125,3 +128,31 @@ def test_skipped_card_is_neutral_placeholder() -> None:
     assert payload["headlines_clean"] is True
     assert payload["fund_notes"] == "No price history from Yahoo."
     assert payload["close"] == 0.0
+
+
+def test_generate_dashboard_accepts_typed_cards(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """generate_dashboard takes Sequence[DashboardCard], not raw dicts."""
+    import dashboard as dashboard_mod
+
+    monkeypatch.setattr(dashboard_mod, "DIST_DIR", tmp_path)
+    cards: list[DashboardCard] = [
+        skipped_dashboard_card("RY.TO", "offline fixture", close=100.0, change_pct=1.5),
+        skipped_dashboard_card("TD.TO", "offline fixture", close=80.0, change_pct=-0.5),
+    ]
+    out = generate_dashboard(
+        cards,
+        regime="BULL",
+        vix_val=18.5,
+        vix_mult=1.0,
+        sentiment_score=45.0,
+        sentiment_rating="neutral",
+        cash_etf="CASH.TO",
+    )
+    assert out == tmp_path / "index.html"
+    html = out.read_text(encoding="utf-8")
+    assert "RY.TO" in html
+    assert "TD.TO" in html
+    assert "BULL" in html
+    assert "18.5" in html

@@ -24,8 +24,10 @@ jobs:
       - name: Install Dependencies
         run: pip install -r requirements.txt -r requirements-dev.txt
 
+      # Lint only — project does not enforce `ruff format` (see ruff.toml).
       - name: Ruff
         run: ruff check .
 
+      # Offline unit suite under tests/ only (pytest.ini testpaths); never scanner.py / test_run.py.
       - name: Pytest (offline)
         run: pytest
