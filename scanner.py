@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""TSX scanner orchestrator: regime gates, sector caps, and Telegram dispatch."""
+"""TSX scan sequencer: load context, manage the book, screen, dispatch, publish."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import pandas as pd
 import yfinance as yf
 from yfinance.exceptions import YFRateLimitError
 
+from cards import DashboardCard, daily_change_pct, dashboard_card, skipped_dashboard_card
 from config import Config, load_config
 from dashboard import generate_dashboard
 from db import (
@@ -32,6 +33,7 @@ from db import (
 )
 from exits import ExitAction, evaluate_institutional_exit
 from fundamentals import FundamentalsResult, days_to_next_earnings, evaluate_fundamentals
+from gates import arm_setup, screen_technical
 from indicators import (
     BarSnapshot,
     SetupFlags,
@@ -46,7 +48,7 @@ from sentiment import (
     evaluate_news_velocity,
     get_macro_sentiment,
 )
-from sizing import MAX_PORTFOLIO_HEAT_R, PositionSize, portfolio_heat_r, size_position
+from sizing import PositionSize, evaluate_heat_veto, size_inverse_from_underlying, size_position
 from telegram_notify import (
     AlertContext,
     format_exit_html,
@@ -372,89 +374,6 @@ def _build_alert_context(
     )
 
 
-def _daily_change_pct(df: pd.DataFrame, close: float) -> float:
-    """Percent change vs prior session close."""
-    if len(df) < 2 or "Close" not in df.columns:
-        return 0.0
-    prev_close = float(df["Close"].iloc[-2])
-    if prev_close <= 0:
-        return 0.0
-    return ((close - prev_close) / prev_close) * 100.0
-
-
-def _dashboard_card(
-    ticker: str,
-    sector: str,
-    bar: BarSnapshot,
-    df: pd.DataFrame,
-    flags: SetupFlags,
-    fund: FundamentalsResult,
-    news: NewsVelocityResult,
-    category: str,
-    extra_note: str = "",
-) -> dict:
-    notes = fund.notes
-    if extra_note:
-        notes = f"{extra_note} {notes}".strip()
-    return {
-        "ticker": ticker,
-        "sector": sector,
-        "close": bar.close,
-        "change_pct": _daily_change_pct(df, bar.close),
-        "category": category,
-        "adx": bar.adx,
-        "rvol": flags.rvol,
-        "sma50": bar.sma_50,
-        "sma200": bar.sma_200,
-        "sma50_slope": bar.sma_50_slope,
-        "rs_vs_xiu": flags.rs_vs_xiu,
-        "pullback_pct": flags.pullback_pct,
-        # Signed: + above 50 SMA, − below (pullback_pct is abs-only).
-        "dist_to_50_pct": (
-            ((bar.close - bar.sma_50) / bar.sma_50) * 100.0 if bar.sma_50 > 0 else 0.0
-        ),
-        "above_sma50": bar.close >= bar.sma_50,
-        "dist_to_200_pct": flags.dist_to_200_sma_pct,
-        "invalidation_price": bar.sma_200 * 0.985,
-        "debt_safe": fund.debt_safe,
-        "fcf_positive": fund.fcf_positive,
-        "earnings_conflict": fund.earnings_conflict,
-        "headlines_clean": news.headlines_clean,
-        "fund_notes": notes,
-    }
-
-
-def _skipped_dashboard_card(
-    ticker: str,
-    reason: str,
-    close: float = 0.0,
-    change_pct: float = 0.0,
-) -> dict:
-    return {
-        "ticker": ticker,
-        "sector": ticker_sector(ticker),
-        "close": close,
-        "change_pct": change_pct,
-        "category": "neutral",
-        "adx": 0.0,
-        "rvol": 0.0,
-        "sma50": 0.0,
-        "sma200": 0.0,
-        "sma50_slope": 0.0,
-        "rs_vs_xiu": 0.0,
-        "pullback_pct": 0.0,
-        "dist_to_50_pct": 0.0,
-        "above_sma50": False,
-        "dist_to_200_pct": 0.0,
-        "invalidation_price": 0.0,
-        "debt_safe": False,
-        "fcf_positive": False,
-        "earnings_conflict": False,
-        "headlines_clean": True,
-        "fund_notes": reason,
-    }
-
-
 def _reject_fund_or_news(
     ticker: str,
     fund: FundamentalsResult,
@@ -581,15 +500,13 @@ def _try_dispatch_inverse(
     if inv_close is None:
         print(f" -> [SKIPPED] {inverse_ticker}: could not load inverse quote.")
         return False
-    if bar.close <= 0 or bar.atr <= 0:
-        return False
-
-    # Translate underlying ATR risk onto the inverse, scaled by |leverage|.
-    leverage_factor = inverse_leverage(inverse_ticker)
-    underlying_stop_pct = (1.5 * bar.atr) / bar.close
-    inv_stop_pct = underlying_stop_pct * leverage_factor
-    inv_atr = (inv_close * inv_stop_pct) / 1.5
-    size = size_position(inv_close, inv_atr, dynamic_risk_cad)
+    size = size_inverse_from_underlying(
+        underlying_close=bar.close,
+        underlying_atr=bar.atr,
+        inverse_close=inv_close,
+        leverage_factor=inverse_leverage(inverse_ticker),
+        risk_cad=dynamic_risk_cad,
+    )
     if size is None:
         return False
 
@@ -706,7 +623,7 @@ def scan_market() -> None:
     alerted_sectors: set[str] = set(active_sectors(conn))
     alerted_vehicles: set[str] = set()
     setups_dispatched = 0
-    dashboard_cards: list[dict] = []
+    dashboard_cards: list[DashboardCard] = []
 
     # Placeholder rows for names that fail the technical pre-screen (no Yahoo I/O).
     dummy_fund = FundamentalsResult(
@@ -753,21 +670,13 @@ def scan_market() -> None:
         )
         alerted_sectors = set(active_sectors(conn))
 
-        # Global portfolio heat: block new buys once open risk hits 6.0R.
+        # Global portfolio heat: block new buys once open risk hits the cap.
         # Free rolls (stop >= entry after 1.5R de-risk) count as 0.0R.
-        unit_risk = cfg.portfolio_risk_cad
-        current_open_r = portfolio_heat_r(list_active_positions(conn), unit_risk)
-        heat_veto = current_open_r >= MAX_PORTFOLIO_HEAT_R
-        if heat_veto:
-            print(
-                f" -> [HEAT VETO] Portfolio at {current_open_r:.1f}R open risk. "
-                "New buys blocked."
-            )
-        elif current_open_r > 0:
-            print(
-                f" -> [HEAT] Open portfolio risk: "
-                f"{current_open_r:.1f}R / {MAX_PORTFOLIO_HEAT_R:.0f}R"
-            )
+        heat = evaluate_heat_veto(
+            list_active_positions(conn), cfg.portfolio_risk_cad
+        )
+        if heat.log_line is not None:
+            print(heat.log_line)
 
         for ticker in TSX_WATCHLIST:
             try:
@@ -776,18 +685,18 @@ def scan_market() -> None:
                 if df.empty:
                     reason = "No price history from Yahoo."
                     print(f" -> [SKIP] {ticker}: {reason}")
-                    dashboard_cards.append(_skipped_dashboard_card(ticker, reason))
+                    dashboard_cards.append(skipped_dashboard_card(ticker, reason))
                     continue
                 if len(df) < 200:
                     reason = f"Insufficient history ({len(df)} bars, need 200)."
                     print(f" -> [SKIP] {ticker}: {reason}")
                     close = float(df["Close"].iloc[-1]) if "Close" in df.columns else 0.0
                     dashboard_cards.append(
-                        _skipped_dashboard_card(
+                        skipped_dashboard_card(
                             ticker,
                             reason,
                             close=close,
-                            change_pct=_daily_change_pct(df, close),
+                            change_pct=daily_change_pct(df, close),
                         )
                     )
                     continue
@@ -801,36 +710,15 @@ def scan_market() -> None:
                 illiquid = bool(liquidity_note)
 
                 # 3. Technical pre-screen.
-                is_tech_buy = (
-                    market_regime == "BULL"
-                    and flags.is_macro_bullish
-                    and flags.is_in_pullback
-                    and flags.is_rs_leader
-                    and flags.is_bounce_confirmed
-                    and flags.is_bull_bulletproof
-                    and not illiquid
+                tech = screen_technical(
+                    market_regime=market_regime,
+                    flags=flags,
+                    illiquid=illiquid,
+                    is_extreme_greed=is_extreme_greed,
                 )
-                is_tech_inverse = (
-                    market_regime == "BEAR"
-                    and flags.is_macro_bearish
-                    and flags.is_at_resistance
-                    and flags.is_rs_laggard
-                    and flags.is_rejection_confirmed
-                    and flags.is_bear_bulletproof
-                    and not illiquid
-                )
-                is_tech_watch = (
-                    market_regime == "BULL"
-                    and flags.is_macro_bullish
-                    and not flags.is_in_pullback
-                    and flags.dist_to_200_sma_pct <= 3.0
-                    and not is_extreme_greed
-                    and not illiquid
-                )
-                needs_deep_scan = is_tech_buy or is_tech_inverse or is_tech_watch
 
                 # 4. Inverted funnel: fundamentals/news only if technicals arm.
-                if needs_deep_scan:
+                if tech.needs_deep_scan:
                     ticker_obj = yf.Ticker(ticker)
                     fund = _with_yahoo_retries(
                         f"{ticker} fundamentals",
@@ -845,33 +733,15 @@ def scan_market() -> None:
                     news = dummy_news
 
                 # 5. Final confirmation with fundamental / news gates.
-                is_valid_buy = (
-                    is_tech_buy
-                    and fund.passes_fundamentals
-                    and news.headlines_clean
-                    and not fund.earnings_conflict
+                armed = arm_setup(
+                    tech,
+                    passes_fundamentals=fund.passes_fundamentals,
+                    headlines_clean=news.headlines_clean,
+                    earnings_conflict=fund.earnings_conflict,
                 )
-                is_valid_inverse = (
-                    is_tech_inverse
-                    and fund.passes_fundamentals
-                    and news.headlines_clean
-                    and not fund.earnings_conflict
-                )
-                is_watch = (
-                    is_tech_watch
-                    and fund.passes_fundamentals
-                    and news.headlines_clean
-                )
-
-                if is_valid_buy or is_valid_inverse:
-                    category = "setup"
-                elif is_watch:
-                    category = "watch"
-                else:
-                    category = "neutral"
 
                 dashboard_cards.append(
-                    _dashboard_card(
+                    dashboard_card(
                         ticker,
                         sector,
                         bar,
@@ -879,7 +749,7 @@ def scan_market() -> None:
                         flags,
                         fund,
                         news,
-                        category,
+                        armed.category,
                         extra_note=liquidity_note,
                     )
                 )
@@ -889,7 +759,7 @@ def scan_market() -> None:
                     f"bounce={flags.is_bounce_confirmed} "
                     f"RVOL={flags.rvol:.2f} ADX={bar.adx:.1f} "
                     f"slope={'UP' if flags.is_slope_positive else 'DN'} "
-                    f"deep_scan={needs_deep_scan}"
+                    f"deep_scan={tech.needs_deep_scan}"
                     f"{' ILLIQUID' if illiquid else ''}"
                 )
 
@@ -898,7 +768,7 @@ def scan_market() -> None:
                     time.sleep(TICKER_PAUSE_SEC)
                     continue
 
-                if is_valid_buy and not heat_veto:
+                if armed.is_valid_buy and not heat.veto:
                     if _try_dispatch_buy(
                         conn=conn,
                         cfg=cfg,
@@ -915,7 +785,7 @@ def scan_market() -> None:
                         alerted_sectors=alerted_sectors,
                     ):
                         setups_dispatched += 1
-                elif is_valid_inverse:
+                elif armed.is_valid_inverse:
                     if _try_dispatch_inverse(
                         conn=conn,
                         cfg=cfg,
@@ -933,7 +803,7 @@ def scan_market() -> None:
                         alerted_vehicles=alerted_vehicles,
                     ):
                         setups_dispatched += 1
-                elif is_watch:
+                elif armed.is_watch:
                     _try_dispatch_watch(
                         conn=conn,
                         cfg=cfg,
@@ -948,7 +818,7 @@ def scan_market() -> None:
                         vix_mult=vix_mult,
                         dynamic_risk_cad=dynamic_risk_cad,
                     )
-                elif needs_deep_scan and fund.earnings_conflict:
+                elif tech.needs_deep_scan and fund.earnings_conflict:
                     print(f" -> [SKIP] {ticker}: {fund.notes}")
                 elif flags.is_macro_bullish and flags.is_in_pullback:
                     print(
@@ -958,7 +828,7 @@ def scan_market() -> None:
                         f"bounce={flags.is_bounce_confirmed} "
                         f"RVOL={flags.rvol:.2f} ADX={bar.adx:.1f} "
                         f"bp={flags.is_bull_bulletproof} "
-                        f"deep_scan={needs_deep_scan}"
+                        f"deep_scan={tech.needs_deep_scan}"
                     )
 
                 time.sleep(TICKER_PAUSE_SEC)
@@ -966,7 +836,7 @@ def scan_market() -> None:
             except YFRateLimitError as exc:
                 reason = f"Yahoo rate limit after retries: {exc}"
                 print(f"Error scanning {ticker}: {reason}")
-                dashboard_cards.append(_skipped_dashboard_card(ticker, reason))
+                dashboard_cards.append(skipped_dashboard_card(ticker, reason))
                 time.sleep(RATE_LIMIT_BACKOFFS[-1])
             except (
                 ValueError,
@@ -978,7 +848,7 @@ def scan_market() -> None:
             ) as exc:
                 print(f"Error scanning {ticker}: {exc}")
                 dashboard_cards.append(
-                    _skipped_dashboard_card(ticker, f"Scan error: {exc}")
+                    skipped_dashboard_card(ticker, f"Scan error: {exc}")
                 )
 
         if setups_dispatched == 0:
@@ -995,7 +865,7 @@ def scan_market() -> None:
             print(f" -> [IDLE CASH] No setups. Remain 100% in {CASH_ETF}.")
 
         generate_dashboard(
-            cards=dashboard_cards,
+            cards=[card.to_template_dict() for card in dashboard_cards],
             regime=market_regime,
             vix_val=vix_close,
             vix_mult=vix_mult,

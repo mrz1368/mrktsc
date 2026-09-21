@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sizing import MAX_PORTFOLIO_HEAT_R, portfolio_heat_r
+from sizing import MAX_PORTFOLIO_HEAT_R, evaluate_heat_veto, portfolio_heat_r
 
 
 @dataclass
@@ -51,3 +51,27 @@ def test_heat_veto_threshold() -> None:
 
 def test_zero_unit_risk_returns_zero() -> None:
     assert portfolio_heat_r([FakePos(100.0, 97.0, 10)], unit_risk_cad=0.0) == 0.0
+
+
+def test_heat_veto_decision_and_log_lines() -> None:
+    flat = evaluate_heat_veto([], unit_risk_cad=10.0)
+    assert flat.veto is False
+    assert flat.log_line is None
+
+    open_book = evaluate_heat_veto(
+        [FakePos(100.0, 97.0, 10), FakePos(80.0, 78.0, 5)],
+        unit_risk_cad=10.0,
+    )
+    assert open_book.open_r == 4.0
+    assert open_book.veto is False
+    assert open_book.log_line == " -> [HEAT] Open portfolio risk: 4.0R / 6R"
+
+    capped = evaluate_heat_veto(
+        [FakePos(100.0, 99.0, 10) for _ in range(6)],
+        unit_risk_cad=10.0,
+    )
+    assert capped.open_r == MAX_PORTFOLIO_HEAT_R
+    assert capped.veto is True
+    assert capped.log_line == (
+        " -> [HEAT VETO] Portfolio at 6.0R open risk. New buys blocked."
+    )

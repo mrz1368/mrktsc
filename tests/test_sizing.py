@@ -10,6 +10,7 @@ from sizing import (
     ATR_STOP_MULT,
     SCALE_OUT_FRACTION,
     TARGET_1_R,
+    size_inverse_from_underlying,
     size_position,
     tranche_one_shares,
 )
@@ -59,3 +60,38 @@ def test_invalid_inputs_return_none() -> None:
     assert size_position(0.0, 2.0, 100.0) is None
     assert size_position(100.0, 0.0, 100.0) is None
     assert size_position(100.0, 2.0, 0.0) is None
+
+
+def test_inverse_atr_scales_underlying_risk_by_leverage() -> None:
+    # stop pct = 1.5 * 2 / 100 = 3%; 2x leverage → 6% of the inverse.
+    # inv ATR = 50 * 0.06 / 1.5 = 2.0, same ticket as sizing the inverse directly.
+    scaled = size_inverse_from_underlying(
+        underlying_close=100.0,
+        underlying_atr=2.0,
+        inverse_close=50.0,
+        leverage_factor=2.0,
+        risk_cad=300.0,
+    )
+    assert scaled == size_position(50.0, 2.0, 300.0)
+
+    half = size_inverse_from_underlying(
+        underlying_close=100.0,
+        underlying_atr=2.0,
+        inverse_close=50.0,
+        leverage_factor=1.0,
+        risk_cad=300.0,
+    )
+    assert half == size_position(50.0, 1.0, 300.0)
+    assert half is not None
+    assert half.atr == pytest.approx(1.0)
+
+    assert (
+        size_inverse_from_underlying(
+            underlying_close=0.0,
+            underlying_atr=2.0,
+            inverse_close=50.0,
+            leverage_factor=2.0,
+            risk_cad=300.0,
+        )
+        is None
+    )

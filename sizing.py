@@ -43,6 +43,55 @@ def portfolio_heat_r(
 
 
 @dataclass(frozen=True)
+class HeatVeto:
+    """Open-risk reading. `veto` blocks new buys; `log_line` is None when flat."""
+
+    open_r: float
+    veto: bool
+    log_line: str | None
+
+
+def evaluate_heat_veto(
+    positions: Iterable[HeatPosition],
+    unit_risk_cad: float,
+    *,
+    max_heat_r: float = MAX_PORTFOLIO_HEAT_R,
+) -> HeatVeto:
+    """Compare open risk to the heat cap and assemble the scanner log line."""
+    open_r = portfolio_heat_r(positions, unit_risk_cad)
+    veto = open_r >= max_heat_r
+    if veto:
+        log_line = (
+            f" -> [HEAT VETO] Portfolio at {open_r:.1f}R open risk. "
+            "New buys blocked."
+        )
+    elif open_r > 0:
+        log_line = (
+            f" -> [HEAT] Open portfolio risk: {open_r:.1f}R / {max_heat_r:.0f}R"
+        )
+    else:
+        log_line = None
+    return HeatVeto(open_r=open_r, veto=veto, log_line=log_line)
+
+
+def size_inverse_from_underlying(
+    *,
+    underlying_close: float,
+    underlying_atr: float,
+    inverse_close: float,
+    leverage_factor: float,
+    risk_cad: float,
+) -> PositionSize | None:
+    """Translate underlying ATR risk onto the inverse, scaled by |leverage|."""
+    if underlying_close <= 0 or underlying_atr <= 0:
+        return None
+    underlying_stop_pct = (ATR_STOP_MULT * underlying_atr) / underlying_close
+    inv_stop_pct = underlying_stop_pct * leverage_factor
+    inv_atr = (inverse_close * inv_stop_pct) / ATR_STOP_MULT
+    return size_position(inverse_close, inv_atr, risk_cad)
+
+
+@dataclass(frozen=True)
 class PositionSize:
     entry: float
     atr: float
