@@ -11,10 +11,15 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-MIN_RVOL = 1.0
-MIN_ADX = 25.0
-MAX_PENETRATION_ATR = 1.0
-SMA_SLOPE_LOOKBACK = 5
+from thresholds import (
+    MAX_CLV_BEAR,
+    MAX_PENETRATION_ATR,
+    MIN_ADX,
+    MIN_CLV_BULL,
+    MIN_RVOL,
+    PULLBACK_MAX_PCT,
+    SMA_SLOPE_LOOKBACK,
+)
 
 
 def _wilder_smooth(series: pd.Series, length: int) -> pd.Series:
@@ -44,12 +49,8 @@ def _adx(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14) ->
     ).max(axis=1)
 
     atr = _wilder_smooth(tr, length)
-    plus_di = 100.0 * _wilder_smooth(pd.Series(plus_dm, index=high.index), length) / (
-        atr + 1e-9
-    )
-    minus_di = 100.0 * _wilder_smooth(pd.Series(minus_dm, index=high.index), length) / (
-        atr + 1e-9
-    )
+    plus_di = 100.0 * _wilder_smooth(pd.Series(plus_dm, index=high.index), length) / (atr + 1e-9)
+    minus_di = 100.0 * _wilder_smooth(pd.Series(minus_dm, index=high.index), length) / (atr + 1e-9)
     dx = 100.0 * (plus_di - minus_di).abs() / (plus_di + minus_di + 1e-9)
     return _wilder_smooth(dx, length)
 
@@ -161,11 +162,11 @@ def evaluate_setup_flags(bar: BarSnapshot, benchmark_return: float) -> SetupFlag
     pullback_pct = ((bar.close - bar.sma_50) / bar.sma_50) * 100
     pullback_below_pct = ((bar.sma_50 - bar.close) / bar.sma_50) * 100
 
-    # Close Location Value — institutional confirmation threshold (>60% / <40%).
+    # Close Location Value — institutional confirmation threshold.
     day_range = bar.high - bar.low
     clv = (bar.close - bar.low) / day_range if day_range > 0 else 0.5
-    strong_bull_wick = clv >= 0.60
-    strong_bear_wick = clv <= 0.40
+    strong_bull_wick = clv >= MIN_CLV_BULL
+    strong_bear_wick = clv <= MAX_CLV_BEAR
 
     rvol = (bar.volume / bar.vol_sma) if bar.vol_sma > 0 else 0.0
 
@@ -183,34 +184,24 @@ def evaluate_setup_flags(bar: BarSnapshot, benchmark_return: float) -> SetupFlag
     is_trend_strong = bar.adx >= MIN_ADX
 
     is_bull_bulletproof = (
-        is_slope_positive
-        and is_volume_confirmed
-        and is_support_intact
-        and is_trend_strong
+        is_slope_positive and is_volume_confirmed and is_support_intact and is_trend_strong
     )
     is_bear_bulletproof = (
-        is_slope_negative
-        and is_volume_confirmed
-        and is_resistance_intact
-        and is_trend_strong
+        is_slope_negative and is_volume_confirmed and is_resistance_intact and is_trend_strong
     )
 
     return SetupFlags(
         is_macro_bullish=(
-            bar.close > bar.sma_150
-            and bar.close > bar.sma_200
-            and bar.sma_50 > bar.sma_200
+            bar.close > bar.sma_150 and bar.close > bar.sma_200 and bar.sma_50 > bar.sma_200
         ),
         is_macro_bearish=(
-            bar.close < bar.sma_150
-            and bar.close < bar.sma_200
-            and bar.sma_50 < bar.sma_200
+            bar.close < bar.sma_150 and bar.close < bar.sma_200 and bar.sma_50 < bar.sma_200
         ),
         pullback_pct=abs(pullback_pct),
         pullback_below_pct=pullback_below_pct,
         # Long pullback: near support from above — not a close below the 50 SMA.
-        is_in_pullback=(abs(pullback_pct) <= 2.5) and (bar.close >= bar.sma_50),
-        is_at_resistance=(abs(pullback_pct) <= 2.5) and (bar.close <= bar.sma_50),
+        is_in_pullback=((abs(pullback_pct) <= PULLBACK_MAX_PCT) and (bar.close >= bar.sma_50)),
+        is_at_resistance=((abs(pullback_pct) <= PULLBACK_MAX_PCT) and (bar.close <= bar.sma_50)),
         dist_to_200_sma_pct=(abs(bar.close - bar.sma_200) / bar.sma_200) * 100,
         is_rs_leader=bar.stock_roc > benchmark_return,
         is_rs_laggard=bar.stock_roc < benchmark_return,

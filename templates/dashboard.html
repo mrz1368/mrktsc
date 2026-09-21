@@ -177,7 +177,7 @@
           <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Technical Gates</div>
 
           {# ADX #}
-          {% set adx_pass = card.adx >= 25 %}
+          {% set adx_pass = card.adx >= thresholds.min_adx %}
           <div class="flex justify-between items-start gap-3">
             <span class="text-slate-400">Trend (ADX):</span>
             <span class="font-mono text-right leading-tight {{ 'text-emerald-400' if adx_pass else 'text-rose-400/85' }}">
@@ -189,7 +189,7 @@
           </div>
 
           {# RVOL #}
-          {% set rvol_pass = card.rvol >= 1.0 %}
+          {% set rvol_pass = card.rvol >= thresholds.min_rvol %}
           {% set rvol_hot = card.rvol >= 2.0 %}
           <div class="flex justify-between items-start gap-3">
             <span class="text-slate-400">Relative Volume (RVOL):</span>
@@ -208,7 +208,7 @@
             <span class="font-mono text-right leading-tight {{ 'text-emerald-400' if slope_pass else 'text-rose-400/85' }}">
               {{ '✔' if slope_pass else '✘' }} {{ "%+.2f"|format(card.sma50_slope) }}%
               <span class="block text-[10px] font-sans {{ 'text-emerald-400/70' if slope_pass else 'text-rose-400/55' }}">
-                {% if card.sma50_slope >= 0.5 %}5d accelerating{% elif slope_pass %}5d rising{% elif card.sma50_slope <= -0.5 %}5d decelerating{% else %}5d flattening{% endif %}
+                {% if card.sma50_slope >= 0.5 %}{{ thresholds.sma_slope_lookback }}d accelerating{% elif slope_pass %}{{ thresholds.sma_slope_lookback }}d rising{% elif card.sma50_slope <= -0.5 %}{{ thresholds.sma_slope_lookback }}d decelerating{% else %}{{ thresholds.sma_slope_lookback }}d flattening{% endif %}
               </span>
             </span>
           </div>
@@ -228,14 +228,14 @@
           {# Price vs 50 SMA (signed) #}
           {% set above50 = card.above_sma50 %}
           {% set d50 = card.dist_to_50_pct|default(0) %}
-          {% set pb_ok = above50 and (d50|abs) <= 2.5 %}
+          {% set pb_ok = above50 and (d50|abs) <= thresholds.pullback_max_pct %}
           <div class="flex justify-between items-start gap-3">
             <span class="text-slate-400">Price vs 50 SMA:</span>
             <span class="font-mono text-right leading-tight {{ 'text-emerald-400' if above50 else 'text-rose-400/85' }}">
               {{ 'ABOVE' if above50 else 'BELOW' }} {{ "%+.2f"|format(d50) }}%
               <span class="block text-[10px] font-sans {{ 'text-sky-400/80' if pb_ok else ('text-emerald-400/70' if above50 else 'text-rose-400/55') }}">
                 {% if pb_ok %}
-                in pullback entry zone (≤2.5% above)
+                in pullback entry zone (≤{{ thresholds.pullback_max_pct }}% above)
                 {% elif above50 %}
                 extended above 50 SMA (${{ "%.2f"|format(card.sma50) }})
                 {% else %}
@@ -294,28 +294,28 @@
           </h4>
           <ul class="space-y-2.5">
             <li>
-              <strong class="text-slate-100">Trend Strength (ADX &ge; 25.0):</strong>
+              <strong class="text-slate-100">Trend Strength (ADX &ge; {{ "%.1f"|format(thresholds.min_adx) }}):</strong>
               Calculated using Wilder's RMA. Ensures the stock is in a definitive directional trend, filtering out horizontal chop and consolidation drift.
             </li>
             <li>
-              <strong class="text-slate-100">Institutional Footprint (RVOL &ge; 1.0x):</strong>
+              <strong class="text-slate-100">Institutional Footprint (RVOL &ge; {{ "%.1f"|format(thresholds.min_rvol) }}x):</strong>
               Relative volume versus the 20-day volume SMA. Confirms that professional money is defending the pullback.
             </li>
             <li>
               <strong class="text-slate-100">Rising Support (50 SMA Slope > 0%):</strong>
-              Evaluates the 5-day percentage change of the 50-day moving average so slope is price-scale invariant across the TSX universe.
+              Evaluates the {{ thresholds.sma_slope_lookback }}-day percentage change of the 50-day moving average so slope is price-scale invariant across the TSX universe.
             </li>
             <li>
               <strong class="text-slate-100">Market Outperformance (RS vs XIU.TO > 0%):</strong>
               63-day Rate of Change comparison against the TSX 60 benchmark, ensuring capital flows only into market leaders.
             </li>
             <li>
-              <strong class="text-slate-100">Entry Location (Pullback &le; 2.5% above 50 SMA):</strong>
-              Prevents chasing extended breakouts and avoids breakdowns. Long entries require the close to hold at or above the 50 SMA within 2.5%.
+              <strong class="text-slate-100">Entry Location (Pullback &le; {{ thresholds.pullback_max_pct }}% above 50 SMA):</strong>
+              Prevents chasing extended breakouts and avoids breakdowns. Long entries require the close to hold at or above the 50 SMA within {{ thresholds.pullback_max_pct }}%.
             </li>
             <li>
-              <strong class="text-slate-100">Candle Confirmation (CLV &ge; 0.60):</strong>
-              Requires a bullish close finishing in the upper 60% of the day's range (Close Location Value), verifying active buyer defense.
+              <strong class="text-slate-100">Candle Confirmation (CLV &ge; {{ "%.2f"|format(thresholds.min_clv_bull) }}):</strong>
+              Requires a bullish close finishing in the upper {{ "%.0f"|format(thresholds.min_clv_bull * 100) }}% of the day's range (Close Location Value), verifying active buyer defense.
             </li>
           </ul>
         </section>
@@ -327,28 +327,28 @@
           </h4>
           <ul class="space-y-2.5">
             <li>
-              <strong class="text-slate-100">Liquidity Gate (MDDV &ge; $5M CAD, Price &ge; $5):</strong>
-              20-day median of close × volume must be at least $5M CAD, and last close must be at least $5, so orders do not walk illiquid books or penny names.
+              <strong class="text-slate-100">Liquidity Gate (MDDV &ge; ${{ "%.0f"|format(thresholds.min_mddv_cad / 1_000_000) }}M CAD, Price &ge; ${{ "%.0f"|format(thresholds.min_price_cad) }}):</strong>
+              20-day median of close × volume must be at least ${{ "%.0f"|format(thresholds.min_mddv_cad / 1_000_000) }}M CAD, and last close must be at least ${{ "%.0f"|format(thresholds.min_price_cad) }}, so orders do not walk illiquid books or penny names.
             </li>
             <li>
-              <strong class="text-slate-100">Debt Service Coverage (&ge; 2.0x):</strong>
-              Operating income (EBITDA) must cover interest obligations by at least 2.0x. Financial institutions (banks/insurers) automatically bypass this metric.
+              <strong class="text-slate-100">Debt Service Coverage (&ge; {{ "%.1f"|format(thresholds.min_interest_coverage) }}x):</strong>
+              Operating income (EBITDA) must cover interest obligations by at least {{ "%.1f"|format(thresholds.min_interest_coverage) }}x. Financial institutions (banks/insurers) automatically bypass this metric.
             </li>
             <li>
               <strong class="text-slate-100">Free Cash Flow (FCF > 0):</strong>
               Trailing Twelve Month (TTM) cash flow must be positive to ensure business solvency without continuous capital dilution.
             </li>
             <li>
-              <strong class="text-slate-100">Earnings Blackout (-2 to +7 Days):</strong>
+              <strong class="text-slate-100">Earnings Blackout (-{{ thresholds.earnings_blackout_post_days }} to +{{ thresholds.earnings_blackout_ahead_days }} Days):</strong>
               Hard blocks setups during reporting weeks to eliminate gap risk.
             </li>
             <li>
-              <strong class="text-slate-100">Headline Velocity (7-Day NLP Filter):</strong>
+              <strong class="text-slate-100">Headline Velocity ({{ thresholds.news_lookback_days }}-Day NLP Filter):</strong>
               Scans news for litigation, short-seller alerts, regulatory probes, and sudden management resignations.
             </li>
             <li>
               <strong class="text-slate-100">Macro Sentiment &amp; Volatility (VIX Sizing):</strong>
-              Blocks long positions during Extreme Greed (>75) and scales position size inversely with the CBOE VIX index.
+              Blocks long positions during Extreme Greed (&gt;{{ "%.0f"|format(thresholds.extreme_greed_score) }}) and scales position size inversely with the CBOE VIX index.
             </li>
           </ul>
         </section>

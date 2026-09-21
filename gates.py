@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from indicators import SetupFlags
+from thresholds import WATCH_MAX_DIST_TO_200_PCT
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,7 @@ def is_tech_watch(
         market_regime == "BULL"
         and flags.is_macro_bullish
         and not flags.is_in_pullback
-        and flags.dist_to_200_sma_pct <= 3.0
+        and flags.dist_to_200_sma_pct <= WATCH_MAX_DIST_TO_200_PCT
         and not is_extreme_greed
         and not illiquid
     )
@@ -122,10 +123,7 @@ def arm_setup(
     """Final confirmation with fundamental / news gates."""
     return ArmedSetup(
         is_valid_buy=(
-            tech.is_tech_buy
-            and passes_fundamentals
-            and headlines_clean
-            and not earnings_conflict
+            tech.is_tech_buy and passes_fundamentals and headlines_clean and not earnings_conflict
         ),
         is_valid_inverse=(
             tech.is_tech_inverse
@@ -133,7 +131,5 @@ def arm_setup(
             and headlines_clean
             and not earnings_conflict
         ),
-        is_watch=(
-            tech.is_tech_watch and passes_fundamentals and headlines_clean
-        ),
+        is_watch=(tech.is_tech_watch and passes_fundamentals and headlines_clean),
     )

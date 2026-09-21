@@ -11,6 +11,14 @@ from yfinance.exceptions import YFRateLimitError
 
 from indicators import add_technical_indicators
 from market_data import fetch_benchmark_history, fetch_inverse_history, fetch_vix_history
+from thresholds import (
+    VIX_FALLBACK,
+    VIX_HIGH,
+    VIX_LOW,
+    VIX_MULT_HIGH,
+    VIX_MULT_LOW,
+    VIX_MULT_NEUTRAL,
+)
 
 
 @dataclass(frozen=True)
@@ -82,16 +90,16 @@ def get_vix_multiplier() -> tuple[float, float]:
     try:
         hist = fetch_vix_history(period="5d")
         if hist.empty:
-            return 1.0, 20.0
+            return VIX_MULT_NEUTRAL, VIX_FALLBACK
         vix_close = float(hist["Close"].iloc[-1])
-        if vix_close < 15.0:
-            return 1.25, vix_close
-        if vix_close > 25.0:
-            return 0.50, vix_close
-        return 1.0, vix_close
+        if vix_close < VIX_LOW:
+            return VIX_MULT_LOW, vix_close
+        if vix_close > VIX_HIGH:
+            return VIX_MULT_HIGH, vix_close
+        return VIX_MULT_NEUTRAL, vix_close
     except _SOFT_FAIL as exc:
         print(f"Warning: Could not fetch VIX: {exc}")
-        return 1.0, 20.0
+        return VIX_MULT_NEUTRAL, VIX_FALLBACK
 
 
 def load_benchmark_state() -> BenchmarkState:

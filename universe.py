@@ -8,17 +8,17 @@ from __future__ import annotations
 
 import pandas as pd
 
-# =====================================================================
-# INSTITUTIONAL CONSTRAINTS & THRESHOLDS
-# =====================================================================
-MIN_MDDV_CAD = 5_000_000.0  # $5M CAD daily turnover (eliminates slippage)
-MIN_PRICE_CAD = 5.00  # Floor against penny-stock manipulation
-MAX_OPEN_PER_SECTOR = 1  # Portfolio concentration risk ceiling
-EARNINGS_BLACKOUT_AHEAD_DAYS = 7  # Pre-earnings announcement lockout
-EARNINGS_BLACKOUT_POST_DAYS = 2  # Post-earnings reaction digestion lockout
-EARNINGS_BLACKOUT_DAYS = EARNINGS_BLACKOUT_AHEAD_DAYS  # backward-compatible alias
-NEWS_LOOKBACK_DAYS = 7
-EXTREME_GREED_SCORE = 75.0  # Regime sentiment threshold
+import thresholds as _thr
+
+# Liquidity floors used locally; remaining names re-exported for importers.
+MIN_MDDV_CAD = _thr.MIN_MDDV_CAD
+MIN_PRICE_CAD = _thr.MIN_PRICE_CAD
+MAX_OPEN_PER_SECTOR = _thr.MAX_OPEN_PER_SECTOR
+EARNINGS_BLACKOUT_AHEAD_DAYS = _thr.EARNINGS_BLACKOUT_AHEAD_DAYS
+EARNINGS_BLACKOUT_POST_DAYS = _thr.EARNINGS_BLACKOUT_POST_DAYS
+EARNINGS_BLACKOUT_DAYS = _thr.EARNINGS_BLACKOUT_DAYS
+NEWS_LOOKBACK_DAYS = _thr.NEWS_LOOKBACK_DAYS
+EXTREME_GREED_SCORE = _thr.EXTREME_GREED_SCORE
 
 # Macro Benchmarks & Sweeps
 BENCHMARK_TICKER = "XIU.TO"  # iShares S&P/TSX 60 (primary trend arbiter)

@@ -8,12 +8,14 @@ from datetime import datetime, timedelta, timezone
 import requests
 import yfinance as yf
 
-from universe import EXTREME_GREED_SCORE, NEWS_LOOKBACK_DAYS
+from thresholds import (
+    EXTREME_GREED_SCORE,
+    NEWS_LOOKBACK_DAYS,
+    SENTIMENT_FAVORABLE_MAX,
+)
 
 CNN_FNG_URL = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-}
+HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
 NEGATIVE_HEADLINE_KEYWORDS = (
     "lawsuit",
@@ -75,7 +77,7 @@ def get_macro_sentiment() -> MacroSentiment:
         # Contrarian points: fear supports long pullbacks; extreme greed vetoes them.
         if score <= 25:
             sentiment_points = 20.0
-        elif score <= 45:
+        elif score <= SENTIMENT_FAVORABLE_MAX:
             sentiment_points = 16.0
         elif score <= 55:
             sentiment_points = 10.0
@@ -171,11 +173,7 @@ def evaluate_news_velocity(ticker_obj: yf.Ticker) -> NewsVelocityResult:
             continue
         matched = next((kw for kw in NEGATIVE_HEADLINE_KEYWORDS if kw in text), None)
         if matched:
-            title = (
-                item.get("title")
-                or (item.get("content") or {}).get("title")
-                or matched
-            )
+            title = item.get("title") or (item.get("content") or {}).get("title") or matched
             hits.append(str(title)[:80])
 
     if hits:

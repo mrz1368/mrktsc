@@ -9,22 +9,26 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-from indicators import MIN_ADX, MIN_RVOL
 from sizing import PositionSize
-from universe import (
+from thresholds import (
     EARNINGS_BLACKOUT_AHEAD_DAYS,
     EARNINGS_BLACKOUT_POST_DAYS,
     EXTREME_GREED_SCORE,
+    MAX_CLV_BEAR,
+    MAX_OPEN_PER_SECTOR,
+    MIN_ADX,
+    MIN_CLV_BULL,
+    MIN_INTEREST_COVERAGE,
+    MIN_RVOL,
+    SENTIMENT_FAVORABLE_MAX,
 )
 
 TELEGRAM_API = "https://api.telegram.org"
 EARNINGS_CLEAR_TEXT = (
-    f"CLEAR (Outside -{EARNINGS_BLACKOUT_POST_DAYS}/"
-    f"+{EARNINGS_BLACKOUT_AHEAD_DAYS} day window)"
+    f"CLEAR (Outside -{EARNINGS_BLACKOUT_POST_DAYS}/+{EARNINGS_BLACKOUT_AHEAD_DAYS} day window)"
 )
 EARNINGS_WARN_TEXT = (
-    f"WARNING (Inside -{EARNINGS_BLACKOUT_POST_DAYS}/"
-    f"+{EARNINGS_BLACKOUT_AHEAD_DAYS} day window)"
+    f"WARNING (Inside -{EARNINGS_BLACKOUT_POST_DAYS}/+{EARNINGS_BLACKOUT_AHEAD_DAYS} day window)"
 )
 
 
@@ -82,31 +86,28 @@ def _bulletproof_block(ctx: AlertContext, *, bearish: bool = False) -> str:
     icons = _validation_icons(ctx, bearish=bearish)
     slope_label = "Falling Resistance" if bearish else "Rising Support"
     rs_label = "Market Laggard" if bearish else "Market Leader"
+    bull_pct = int(round(MIN_CLV_BULL * 100))
+    bear_pct = int(round(MAX_CLV_BEAR * 100))
     candle_label = (
-        "Bearish rejection in lower 50% range"
+        f"Bearish rejection in lower {bear_pct}% range"
         if bearish
-        else "Bullish close in upper 50% range"
+        else f"Bullish close in upper {bull_pct}% range"
     )
-    earnings_text = (
-        EARNINGS_WARN_TEXT if ctx.has_earnings_conflict else EARNINGS_CLEAR_TEXT
-    )
+    earnings_text = EARNINGS_WARN_TEXT if ctx.has_earnings_conflict else EARNINGS_CLEAR_TEXT
     sentiment_label = html.escape(ctx.sentiment_rating)
-    if ctx.sentiment_score <= 45:
+    if ctx.sentiment_score <= SENTIMENT_FAVORABLE_MAX:
         sentiment_extra = " - Favorable for longs"
     elif ctx.sentiment_score > EXTREME_GREED_SCORE:
         sentiment_extra = " - Extreme Greed trap"
     else:
         sentiment_extra = ""
+    cov = f"{MIN_INTEREST_COVERAGE:.0f}x"
     debt_text = (
-        "Debt Service Safe (>2x Coverage)"
+        f"Debt Service Safe (>{cov} Coverage)"
         if ctx.debt_safe
-        else "High Debt Burden (Coverage < 2x)"
+        else f"High Debt Burden (Coverage < {cov})"
     )
-    fcf_text = (
-        "Positive TTM Free Cash Flow"
-        if ctx.fcf_positive
-        else "Negative Free Cash Flow"
-    )
+    fcf_text = "Positive TTM Free Cash Flow" if ctx.fcf_positive else "Negative Free Cash Flow"
     news_text = html.escape(ctx.news_notes)
     return (
         f"<b>BULLETPROOF VALIDATION</b>\n"
@@ -151,11 +152,9 @@ def _order_table(size: PositionSize, *, label: str = "Limit Order") -> str:
 def format_setup_html(size: PositionSize, ctx: AlertContext) -> str:
     safe_ticker = html.escape(ctx.ticker)
     capital = size.shares * size.entry
-    risk_shown = (
-        size.risk_cad if ctx.dynamic_risk_cad is None else ctx.dynamic_risk_cad
-    )
+    risk_shown = size.risk_cad if ctx.dynamic_risk_cad is None else ctx.dynamic_risk_cad
     sector_line = (
-        f"• <b>Sector sleeve:</b> {html.escape(ctx.sector)} (max 1 open)\n"
+        f"• <b>Sector sleeve:</b> {html.escape(ctx.sector)} (max {MAX_OPEN_PER_SECTOR} open)\n"
         if ctx.sector
         else ""
     )
@@ -203,9 +202,7 @@ def format_inverse_html(
     safe_inv = html.escape(inverse_ticker)
     safe_und = html.escape(ctx.ticker)
     capital = size.shares * size.entry
-    risk_shown = (
-        size.risk_cad if ctx.dynamic_risk_cad is None else ctx.dynamic_risk_cad
-    )
+    risk_shown = size.risk_cad if ctx.dynamic_risk_cad is None else ctx.dynamic_risk_cad
     vix_close = ctx.vix_close if ctx.vix_close is not None else 0.0
     checklist = _bulletproof_block(ctx, bearish=True)
 
@@ -219,7 +216,8 @@ def format_inverse_html(
         f"• <b>Total Units:</b> <code>{size.shares}</code> shares (${capital:,.2f} CAD)\n"
         f"• <b>Treasury sweep:</b> Sell ~${capital:,.2f} CAD of "
         f"{html.escape(ctx.cash_etf)}\n"
-        f"• <b>Sector sleeve:</b> {html.escape(ctx.sector)} (max 1 open)\n"
+        f"• <b>Sector sleeve:</b> {html.escape(ctx.sector)} "
+        f"(max {MAX_OPEN_PER_SECTOR} open)\n"
         f"• <b>VIX:</b> {vix_close:.1f} ➔ risk x{ctx.vix_mult:.2f} "
         f"(${risk_shown:,.0f} CAD / trade)\n"
         f"• <b>Tranche 1:</b> Sell <b>{size.t1_shares}</b> shares at +1.5R "
@@ -253,13 +251,11 @@ def format_watchlist_html(
     # Positive => below the 50 SMA; negative => above.
     if ctx.pullback_pct > 0:
         distance_line = (
-            f"• <b>Distance to 50 SMA:</b> {ctx.pullback_pct:.2f}% below "
-            f"(${ctx.sma50:.2f})\n"
+            f"• <b>Distance to 50 SMA:</b> {ctx.pullback_pct:.2f}% below (${ctx.sma50:.2f})\n"
         )
     elif ctx.pullback_pct < 0:
         distance_line = (
-            f"• <b>Distance to 50 SMA:</b> {abs(ctx.pullback_pct):.2f}% above "
-            f"(${ctx.sma50:.2f})\n"
+            f"• <b>Distance to 50 SMA:</b> {abs(ctx.pullback_pct):.2f}% above (${ctx.sma50:.2f})\n"
         )
     else:
         distance_line = f"• <b>Distance to 50 SMA:</b> At ${ctx.sma50:.2f}\n"

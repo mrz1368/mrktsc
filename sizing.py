@@ -7,12 +7,14 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Protocol
 
-ATR_STOP_MULT = 1.5
-TARGET_1_R = 1.5
-# Shared harvest fraction for Telegram sizing and live exits (must stay in sync).
-SCALE_OUT_FRACTION = 1.0 / 3.0
-# Cap open portfolio risk before new buys are blocked (scanner heat veto).
-MAX_PORTFOLIO_HEAT_R = 6.0
+from thresholds import (
+    ATR_STOP_MULT,
+    MAX_LIMIT_ATR_FRACTION,
+    MAX_PORTFOLIO_HEAT_R,
+    MIN_SHARES_FOR_SCALE_OUT,
+    SCALE_OUT_FRACTION,
+    TARGET_1_R,
+)
 
 
 class HeatPosition(Protocol):
@@ -77,14 +79,9 @@ def evaluate_heat_veto(
     open_r = portfolio_heat_r(positions, unit_risk_cad)
     veto = open_r >= max_heat_r
     if veto:
-        log_line = (
-            f" -> [HEAT VETO] Portfolio at {open_r:.1f}R open risk. "
-            "New buys blocked."
-        )
+        log_line = f" -> [HEAT VETO] Portfolio at {open_r:.1f}R open risk. New buys blocked."
     elif open_r > 0:
-        log_line = (
-            f" -> [HEAT] Open portfolio risk: {open_r:.1f}R / {max_heat_r:.0f}R"
-        )
+        log_line = f" -> [HEAT] Open portfolio risk: {open_r:.1f}R / {max_heat_r:.0f}R"
     else:
         log_line = None
     return HeatVeto(open_r=open_r, veto=veto, log_line=log_line)
@@ -130,14 +127,14 @@ def size_position(entry: float, atr: float, risk_cad: float) -> PositionSize | N
         return None
 
     shares = math.floor(risk_cad / r)
-    if shares < 3:
-        # Require at least 3 shares to execute a 1/3 scale-out
+    if shares < MIN_SHARES_FOR_SCALE_OUT:
+        # Require enough shares to execute a scale-out tranche.
         return None
 
     t1_shares = tranche_one_shares(shares)
     runner_shares = shares - t1_shares
-    # Do not pay more than 15% of ATR above yesterday's close.
-    max_limit = entry + (0.15 * atr)
+    # Do not pay more than MAX_LIMIT_ATR_FRACTION of ATR above yesterday's close.
+    max_limit = entry + (MAX_LIMIT_ATR_FRACTION * atr)
 
     return PositionSize(
         entry=entry,

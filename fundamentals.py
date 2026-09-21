@@ -9,12 +9,12 @@ from typing import Any
 import pandas as pd
 import yfinance as yf
 
-from universe import (
+from thresholds import (
     EARNINGS_BLACKOUT_AHEAD_DAYS,
     EARNINGS_BLACKOUT_POST_DAYS,
+    MIN_INTEREST_COVERAGE,
 )
 
-MIN_INTEREST_COVERAGE = 2.0
 ETF_SYMBOLS = {
     "XIU.TO",
     "XIC.TO",
@@ -58,10 +58,7 @@ class FundamentalsResult:
     def passes_fundamentals(self) -> bool:
         """Block only on explicit hard fails; missing Yahoo fields fail open."""
         return (
-            not self.earnings_conflict
-            and self.debt_safe
-            and self.fcf_positive
-            and self.quality_ok
+            not self.earnings_conflict and self.debt_safe and self.fcf_positive and self.quality_ok
         )
 
 
@@ -136,11 +133,7 @@ def _check_earnings_blackout(ticker_obj: yf.Ticker, notes: list[str]) -> bool:
                 continue
             earnings_ts = _as_utc(pd.to_datetime(edate))
             days_to_earnings = (earnings_ts.to_pydatetime() - now).days
-            if (
-                -EARNINGS_BLACKOUT_POST_DAYS
-                <= days_to_earnings
-                <= EARNINGS_BLACKOUT_AHEAD_DAYS
-            ):
+            if -EARNINGS_BLACKOUT_POST_DAYS <= days_to_earnings <= EARNINGS_BLACKOUT_AHEAD_DAYS:
                 notes.append(f"Earnings conflict ({days_to_earnings:+d} days)")
                 return True
     except (
@@ -220,8 +213,7 @@ def _eval_debt(info: dict, notes: list[str], score: float) -> tuple[bool, float]
 
     if total_debt > 0 and coverage < MIN_INTEREST_COVERAGE:
         notes.append(
-            f"High debt burden (Interest coverage {coverage:.1f}x < "
-            f"{MIN_INTEREST_COVERAGE:.0f}x)"
+            f"High debt burden (Interest coverage {coverage:.1f}x < {MIN_INTEREST_COVERAGE:.0f}x)"
         )
         return False, score
 
@@ -294,9 +286,7 @@ def evaluate_fundamentals(ticker_obj: yf.Ticker) -> FundamentalsResult:
             RuntimeError,
         ) as exc:
             print(f"Warning: {symbol or 'ticker'} info fetch failed: {exc}")
-            return _metadata_fallback(
-                "Metadata unavailable — passed via technical/macro fallback"
-            )
+            return _metadata_fallback("Metadata unavailable — passed via technical/macro fallback")
 
         if not info:
             reason = "Metadata unavailable — passed via technical/macro fallback"
@@ -336,9 +326,7 @@ def evaluate_fundamentals(ticker_obj: yf.Ticker) -> FundamentalsResult:
         RuntimeError,
     ) as exc:
         print(f"Warning: Fundamental evaluation exception: {exc}")
-        return _metadata_fallback(
-            "Fundamental check skipped due to API exception — fail-open"
-        )
+        return _metadata_fallback("Fundamental check skipped due to API exception — fail-open")
 
     return FundamentalsResult(
         earnings_conflict=has_earnings_conflict,

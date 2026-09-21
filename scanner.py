@@ -67,12 +67,15 @@ from telegram_notify import (
     format_watchlist_html,
     send_html_message,
 )
+from thresholds import (
+    EARNINGS_BLACKOUT_AHEAD_DAYS,
+    EARNINGS_BLACKOUT_POST_DAYS,
+    MAX_LIMIT_ATR_FRACTION,
+    MAX_OPEN_PER_SECTOR,
+)
 from universe import (
     BENCHMARK_TICKER,
     CASH_ETF,
-    EARNINGS_BLACKOUT_AHEAD_DAYS,
-    EARNINGS_BLACKOUT_POST_DAYS,
-    MAX_OPEN_PER_SECTOR,
     SECTOR_INVERSE_MAP,
     TSX_WATCHLIST,
     inverse_etf_for_sector,
@@ -248,10 +251,7 @@ def _manage_open_positions(
                         ),
                     )
                     close_active_position(conn, ticker)
-                    print(
-                        f" -> [EXIT] {ticker}: scale emptied book "
-                        f"@ ${signal.exit_price:.2f}"
-                    )
+                    print(f" -> [EXIT] {ticker}: scale emptied book @ ${signal.exit_price:.2f}")
                 else:
                     update_active_position(
                         conn,
@@ -315,7 +315,6 @@ def _manage_open_positions(
             RuntimeError,
         ) as exc:
             print(f" -> [EXIT ERROR] {ticker}: {exc}")
-
 
 
 def _build_alert_context(
@@ -409,19 +408,14 @@ def _try_dispatch_buy(
         print(f" -> [REJECTED] {ticker}: {reject}")
         return False
     if sector in alerted_sectors:
-        print(
-            f" -> [SKIPPED] {ticker}: Sector {sector} limit "
-            f"({MAX_OPEN_PER_SECTOR}) reached."
-        )
+        print(f" -> [SKIPPED] {ticker}: Sector {sector} limit ({MAX_OPEN_PER_SECTOR}) reached.")
         return False
 
     size = size_position(bar.close, bar.atr, dynamic_risk_cad)
     if size is None:
         return False
 
-    result = record_if_allowed(
-        conn, ticker, size, cfg.cooldown_days, alert_type=ALERT_BUY
-    )
+    result = record_if_allowed(conn, ticker, size, cfg.cooldown_days, alert_type=ALERT_BUY)
     if not result.inserted:
         print(f" -> [BUY COOLDOWN] {ticker}: {result.reason}")
         return False
@@ -474,16 +468,10 @@ def _try_dispatch_inverse(
 ) -> bool:
     inverse_ticker = inverse_etf_for_sector(sector)
     if sector in alerted_sectors:
-        print(
-            f" -> [SKIPPED] {ticker}: Sector {sector} limit "
-            f"({MAX_OPEN_PER_SECTOR}) reached."
-        )
+        print(f" -> [SKIPPED] {ticker}: Sector {sector} limit ({MAX_OPEN_PER_SECTOR}) reached.")
         return False
     if inverse_ticker in alerted_vehicles:
-        print(
-            f" -> [SKIPPED] {ticker}: Inverse vehicle "
-            f"{inverse_ticker} already used."
-        )
+        print(f" -> [SKIPPED] {ticker}: Inverse vehicle {inverse_ticker} already used.")
         return False
 
     inv_close = load_inverse_quote(inverse_ticker)
@@ -564,11 +552,9 @@ def _try_dispatch_watch(
         t1_shares=0,
         runner_shares=0,
         risk_cad=0.0,
-        max_limit_price=bar.close + (0.15 * bar.atr),
+        max_limit_price=bar.close + (MAX_LIMIT_ATR_FRACTION * bar.atr),
     )
-    result = record_if_allowed(
-        conn, ticker, watch_size, cfg.cooldown_days, alert_type=ALERT_WATCH
-    )
+    result = record_if_allowed(conn, ticker, watch_size, cfg.cooldown_days, alert_type=ALERT_WATCH)
     if not result.inserted:
         print(f" -> [WATCH COOLDOWN] {ticker}: {result.reason}")
         return
@@ -641,9 +627,7 @@ def scan_market() -> None:
         f"XIU {market_regime} 3M {bench.roc63 * 100:+.2f}%"
     )
     if alerted_sectors:
-        print(
-            " -> [BOOK] Active sector sleeves: " + ", ".join(sorted(alerted_sectors))
-        )
+        print(" -> [BOOK] Active sector sleeves: " + ", ".join(sorted(alerted_sectors)))
     if is_extreme_greed:
         print(" -> [REGIME VETO] Extreme Greed: new long setups are blocked.")
     if market_regime == "BEAR":
@@ -662,9 +646,7 @@ def scan_market() -> None:
 
         # Global portfolio heat: block new buys once open risk hits the cap.
         # Free rolls (stop >= entry after 1.5R de-risk) count as 0.0R.
-        heat = evaluate_heat_veto(
-            list_active_positions(conn), cfg.portfolio_risk_cad
-        )
+        heat = evaluate_heat_veto(list_active_positions(conn), cfg.portfolio_risk_cad)
         if heat.log_line is not None:
             print(heat.log_line)
 
@@ -838,9 +820,7 @@ def scan_market() -> None:
                 RuntimeError,
             ) as exc:
                 print(f"Error scanning {ticker}: {exc}")
-                dashboard_cards.append(
-                    skipped_dashboard_card(ticker, f"Scan error: {exc}")
-                )
+                dashboard_cards.append(skipped_dashboard_card(ticker, f"Scan error: {exc}"))
 
         if setups_dispatched == 0:
             send_html_message(
