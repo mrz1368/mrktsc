@@ -46,7 +46,7 @@ from sentiment import (
     evaluate_news_velocity,
     get_macro_sentiment,
 )
-from sizing import PositionSize, size_position
+from sizing import MAX_PORTFOLIO_HEAT_R, PositionSize, portfolio_heat_r, size_position
 from telegram_notify import (
     AlertContext,
     format_exit_html,
@@ -755,14 +755,8 @@ def scan_market() -> None:
 
         # Global portfolio heat: block new buys once open risk hits 6.0R.
         # Free rolls (stop >= entry after 1.5R de-risk) count as 0.0R.
-        MAX_PORTFOLIO_HEAT_R = 6.0
-        current_open_r = 0.0
         unit_risk = cfg.portfolio_risk_cad
-        if unit_risk > 0:
-            for pos in list_active_positions(conn):
-                risk_per_share = max(0.0, pos.entry_price - pos.current_stop)
-                open_risk_cad = risk_per_share * pos.shares_remaining
-                current_open_r += open_risk_cad / unit_risk
+        current_open_r = portfolio_heat_r(list_active_positions(conn), unit_risk)
         heat_veto = current_open_r >= MAX_PORTFOLIO_HEAT_R
         if heat_veto:
             print(

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 
+import pandas as pd
 import yfinance as yf
 
 from indicators import add_technical_indicators
@@ -21,6 +23,55 @@ class BenchmarkState:
     @property
     def market_regime(self) -> str:
         return "BEAR" if self.is_bear else "BULL"
+
+
+def is_bear_regime(
+    closes: Sequence[float],
+    sma200s: Sequence[float],
+    sma50: float,
+    sma200: float,
+) -> bool:
+    """3-day close vs 200 SMA confirmation; 50/200 SMA is the mid-whipsaw tie-break."""
+    if len(closes) < 3 or len(sma200s) < 3:
+        return sma50 < sma200
+
+    recent_closes = list(closes)[-3:]
+    recent_smas = list(sma200s)[-3:]
+    if all(c < s for c, s in zip(recent_closes, recent_smas)):
+        return True
+    if all(c > s for c, s in zip(recent_closes, recent_smas)):
+        return False
+    return sma50 < sma200
+
+
+def regime_from_benchmark_frame(bench_df: pd.DataFrame) -> BenchmarkState:
+    """Derive BenchmarkState from an already-enriched daily frame (no network)."""
+    empty = BenchmarkState(roc63=0.0, is_bear=False, close=0.0, sma200=0.0)
+    if bench_df.empty or len(bench_df) < 200:
+        return empty
+    if "SMA_200" not in bench_df.columns:
+        bench_df = add_technical_indicators(bench_df)
+
+    last = bench_df.iloc[-1]
+    close = float(last["Close"])
+    sma200 = float(last["SMA_200"])
+    sma50 = float(last["SMA_50"])
+    roc63 = float(last["ROC_63"])
+    if math.isnan(roc63):
+        roc63 = 0.0
+
+    is_bear = is_bear_regime(
+        bench_df["Close"].tail(3).tolist(),
+        bench_df["SMA_200"].tail(3).tolist(),
+        sma50,
+        sma200,
+    )
+    return BenchmarkState(
+        roc63=roc63,
+        is_bear=is_bear,
+        close=close,
+        sma200=sma200,
+    )
 
 
 def get_vix_multiplier() -> tuple[float, float]:
@@ -47,34 +98,7 @@ def load_benchmark_state() -> BenchmarkState:
         bench_df = yf.Ticker(BENCHMARK_TICKER).history(period="18mo", interval="1d")
         if bench_df.empty or len(bench_df) < 200:
             return empty
-        bench_df = add_technical_indicators(bench_df)
-
-        last = bench_df.iloc[-1]
-        close = float(last["Close"])
-        sma200 = float(last["SMA_200"])
-        sma50 = float(last["SMA_50"])
-        roc63 = float(last["ROC_63"])
-        if math.isnan(roc63):
-            roc63 = 0.0
-
-        # Whipsaw hysteresis: require 3 consecutive closes to flip the regime.
-        closes = bench_df["Close"].tail(3)
-        smas = bench_df["SMA_200"].tail(3)
-
-        if (closes < smas).all():
-            is_bear = True
-        elif (closes > smas).all():
-            is_bear = False
-        else:
-            # Mid-whipsaw: 50 SMA vs 200 SMA is the tie-breaker.
-            is_bear = sma50 < sma200
-
-        return BenchmarkState(
-            roc63=roc63,
-            is_bear=is_bear,
-            close=close,
-            sma200=sma200,
-        )
+        return regime_from_benchmark_frame(add_technical_indicators(bench_df))
     except (ValueError, TypeError, KeyError, IndexError, OSError) as exc:
         print(f"Warning: Could not fetch benchmark: {exc}")
         return empty

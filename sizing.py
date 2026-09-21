@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Protocol
 
 ATR_STOP_MULT = 1.5
 TARGET_1_R = 1.5
 # Shared harvest fraction for Telegram sizing and live exits (must stay in sync).
 SCALE_OUT_FRACTION = 1.0 / 3.0
+# Cap open portfolio risk before new buys are blocked (scanner heat veto).
+MAX_PORTFOLIO_HEAT_R = 6.0
+
+
+class HeatPosition(Protocol):
+    entry_price: float
+    current_stop: float
+    shares_remaining: int
 
 
 def tranche_one_shares(total_shares: int) -> int:
@@ -16,6 +26,20 @@ def tranche_one_shares(total_shares: int) -> int:
     if total_shares <= 0:
         return 0
     return max(1, math.ceil(total_shares * SCALE_OUT_FRACTION))
+
+
+def portfolio_heat_r(
+    positions: Iterable[HeatPosition],
+    unit_risk_cad: float,
+) -> float:
+    """Sum open risk in R-multiples. Free rolls (stop ≥ entry) contribute 0."""
+    if unit_risk_cad <= 0:
+        return 0.0
+    total = 0.0
+    for pos in positions:
+        risk_per_share = max(0.0, float(pos.entry_price) - float(pos.current_stop))
+        total += (risk_per_share * int(pos.shares_remaining)) / unit_risk_cad
+    return total
 
 
 @dataclass(frozen=True)
