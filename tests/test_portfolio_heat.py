@@ -73,5 +73,6 @@ def test_heat_veto_decision_and_log_lines() -> None:
     assert capped.open_r == MAX_PORTFOLIO_HEAT_R
     assert capped.veto is True
     assert capped.log_line == (
-        " -> [HEAT VETO] Portfolio at 6.0R open risk. New buys blocked."
+        " -> [HEAT VETO] Portfolio at 6.0R open risk. "
+        "New buys and inverses blocked."
     )

@@ -22,6 +22,7 @@ from db import (
     confirm_pending_position,
     connect,
     list_active_positions,
+    pending_fill_abort_reason,
     update_active_position,
 )
 from dispatch import try_dispatch_buy, try_dispatch_inverse, try_dispatch_watch
@@ -82,7 +83,25 @@ def _position_as_dict(pos: ActivePosition) -> dict:
     }
 
 
-def _confirm_pending_opens(conn: sqlite3.Connection) -> None:
+def _abort_pending_fill(
+    conn: sqlite3.Connection,
+    cfg: Config,
+    *,
+    ticker: str,
+    reason: str,
+) -> None:
+    """Cancel a PENDING_OPEN that failed fill-safety checks; Telegram is best-effort."""
+    close_active_position(conn, ticker)
+    print(f" -> [FILL ABORT] {ticker}: {reason}; PENDING_OPEN cancelled.")
+    send_html_message(
+        cfg.telegram_bot_token,
+        cfg.telegram_chat_id,
+        f"<b>FILL ABORT</b> {ticker}: {reason}. Pending open cancelled.",
+        context=f"fill abort {ticker}",
+    )
+
+
+def _confirm_pending_opens(conn: sqlite3.Connection, cfg: Config) -> None:
     """Promote PENDING_OPEN rows using the next session's open print."""
     pending = list_active_positions(conn, status=STATUS_PENDING_OPEN)
     if not pending:
@@ -113,15 +132,28 @@ def _confirm_pending_opens(conn: sqlite3.Connection) -> None:
                 for ts, row in df.iterrows():
                     bar_day = pd.Timestamp(ts).date()
                     if bar_day > signal_day:
-                        fill_price = float(row["Open"])
+                        raw_open = row["Open"]
+                        try:
+                            fill_price = float(raw_open)
+                        except (TypeError, ValueError):
+                            fill_price = float("nan")
                         fill_date = pd.Timestamp(ts).isoformat()
                         break
 
-            if fill_price is None or fill_price <= 0:
+            if fill_price is None:
                 print(
                     f" -> [FILL WAIT] {ticker}: waiting for next session open "
                     f"(signal {pos.entry_date})."
                 )
+                continue
+
+            abort = pending_fill_abort_reason(
+                fill_price=fill_price,
+                stop=pos.initial_stop,
+                max_limit_price=pos.max_limit_price,
+            )
+            if abort is not None:
+                _abort_pending_fill(conn, cfg, ticker=ticker, reason=abort)
                 continue
 
             new_initial_stop, new_current_stop = stops_after_pending_fill(
@@ -163,7 +195,7 @@ def _manage_open_positions(
     macro_regime_is_bull: bool,
 ) -> None:
     """Confirm pending fills, then evaluate tranche exits on OPEN positions."""
-    _confirm_pending_opens(conn)
+    _confirm_pending_opens(conn, cfg)
 
     positions = list_active_positions(conn, status=STATUS_OPEN)
     if not positions:
@@ -363,9 +395,10 @@ def scan_market() -> None:
         )
         alerted_sectors = set(active_sectors(conn))
 
-        # Global portfolio heat: block new buys once open risk hits the cap.
+        # Global portfolio heat: block new buys/inverses once open risk hits the cap.
         # Free rolls (stop >= entry after 1.5R de-risk) count as 0.0R.
-        heat = evaluate_heat_veto(list_active_positions(conn), cfg.portfolio_risk_cad)
+        # Unit risk is VIX-scaled so heat stays consistent with sizing.
+        heat = evaluate_heat_veto(list_active_positions(conn), dynamic_risk_cad)
         if heat.log_line is not None:
             print(heat.log_line)
 
@@ -485,7 +518,12 @@ def scan_market() -> None:
                     ):
                         setups_dispatched += 1
                 elif armed.is_valid_inverse:
-                    if try_dispatch_inverse(
+                    if heat.veto:
+                        print(
+                            f" -> [HEAT VETO] {ticker}: inverse blocked "
+                            f"(portfolio at {heat.open_r:.1f}R)."
+                        )
+                    elif try_dispatch_inverse(
                         conn=conn,
                         cfg=cfg,
                         ticker=ticker,

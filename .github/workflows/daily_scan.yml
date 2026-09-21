@@ -25,13 +25,14 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v7
 
-      # Stable cache key so open positions / cooldowns persist across weekday runs.
-      # Bump the -vN suffix (e.g. signals-db-v2) to intentionally bust the cache.
+      # Rolling key: each run saves a new entry; restore-keys picks the latest prior.
+      # Actions cache is write-once on an exact key hit, so a stable key would not
+      # persist weekday mutations after the first successful save.
       - name: Restore cooldown DB
         uses: actions/cache@v6
         with:
           path: signals.db
-          key: signals-db-v1
+          key: signals-db-${{ github.run_id }}
           restore-keys: |
             signals-db-
 

@@ -39,6 +39,7 @@ class ActivePosition:
     sector: str
     status: str
     signal_price: float
+    max_limit_price: float = 0.0
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -110,7 +111,8 @@ def _create_active_positions_table(conn: sqlite3.Connection) -> None:
             bars_held INTEGER NOT NULL DEFAULT 0,
             sector TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'OPEN',
-            signal_price REAL NOT NULL DEFAULT 0
+            signal_price REAL NOT NULL DEFAULT 0,
+            max_limit_price REAL NOT NULL DEFAULT 0
         )
         """
     )
@@ -169,6 +171,12 @@ def _ensure_active_positions_schema(conn: sqlite3.Connection) -> None:
         "active_positions",
         "signal_price",
         "signal_price REAL NOT NULL DEFAULT 0",
+    )
+    _ensure_column(
+        conn,
+        "active_positions",
+        "max_limit_price",
+        "max_limit_price REAL NOT NULL DEFAULT 0",
     )
     conn.execute(
         """
@@ -246,22 +254,33 @@ def open_active_position(
     size: PositionSize,
     sector: str,
     now: datetime | None = None,
-) -> None:
+) -> bool:
     """Book a PENDING_OPEN order from the EOD signal close.
 
     Cost basis is provisional until the next session open is confirmed.
+    Refuses to overwrite an existing live row (``shares_remaining > 0``).
+    Returns True on insert/replace of a flat row, False if refused.
     """
     moment = now or datetime.now(timezone.utc)
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
+
+    existing = conn.execute(
+        """
+        SELECT shares_remaining FROM active_positions WHERE ticker = ?
+        """,
+        (ticker,),
+    ).fetchone()
+    if existing is not None and int(existing["shares_remaining"]) > 0:
+        return False
 
     conn.execute(
         """
         INSERT INTO active_positions (
             ticker, entry_date, entry_price, initial_stop, current_stop,
             shares_total, shares_remaining, is_de_risked, bars_held, sector,
-            status, signal_price
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)
+            status, signal_price, max_limit_price
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)
         ON CONFLICT(ticker) DO UPDATE SET
             entry_date = excluded.entry_date,
             entry_price = excluded.entry_price,
@@ -273,7 +292,8 @@ def open_active_position(
             bars_held = 0,
             sector = excluded.sector,
             status = excluded.status,
-            signal_price = excluded.signal_price
+            signal_price = excluded.signal_price,
+            max_limit_price = excluded.max_limit_price
         """,
         (
             ticker,
@@ -286,9 +306,11 @@ def open_active_position(
             sector,
             STATUS_PENDING_OPEN,
             size.entry,
+            float(size.max_limit_price),
         ),
     )
     conn.commit()
+    return True
 
 
 def list_active_positions(
@@ -301,7 +323,7 @@ def list_active_positions(
             """
             SELECT ticker, entry_date, entry_price, initial_stop, current_stop,
                    shares_total, shares_remaining, is_de_risked, bars_held, sector,
-                   status, signal_price
+                   status, signal_price, max_limit_price
             FROM active_positions
             ORDER BY entry_date ASC
             """
@@ -311,30 +333,34 @@ def list_active_positions(
             """
             SELECT ticker, entry_date, entry_price, initial_stop, current_stop,
                    shares_total, shares_remaining, is_de_risked, bars_held, sector,
-                   status, signal_price
+                   status, signal_price, max_limit_price
             FROM active_positions
             WHERE status = ?
             ORDER BY entry_date ASC
             """,
             (status,),
         ).fetchall()
-    return [
-        ActivePosition(
-            ticker=row["ticker"],
-            entry_date=row["entry_date"],
-            entry_price=float(row["entry_price"]),
-            initial_stop=float(row["initial_stop"]),
-            current_stop=float(row["current_stop"]),
-            shares_total=int(row["shares_total"]),
-            shares_remaining=int(row["shares_remaining"]),
-            is_de_risked=bool(row["is_de_risked"]),
-            bars_held=int(row["bars_held"]),
-            sector=row["sector"],
-            status=str(row["status"] or STATUS_OPEN),
-            signal_price=float(row["signal_price"] or row["entry_price"]),
-        )
-        for row in rows
-    ]
+    return [_row_to_active_position(row) for row in rows]
+
+
+def _row_to_active_position(row: sqlite3.Row) -> ActivePosition:
+    keys = row.keys()
+    max_limit = float(row["max_limit_price"]) if "max_limit_price" in keys else 0.0
+    return ActivePosition(
+        ticker=row["ticker"],
+        entry_date=row["entry_date"],
+        entry_price=float(row["entry_price"]),
+        initial_stop=float(row["initial_stop"]),
+        current_stop=float(row["current_stop"]),
+        shares_total=int(row["shares_total"]),
+        shares_remaining=int(row["shares_remaining"]),
+        is_de_risked=bool(row["is_de_risked"]),
+        bars_held=int(row["bars_held"]),
+        sector=row["sector"],
+        status=str(row["status"] or STATUS_OPEN),
+        signal_price=float(row["signal_price"] or row["entry_price"]),
+        max_limit_price=max_limit,
+    )
 
 
 def confirm_pending_position(
@@ -351,7 +377,7 @@ def confirm_pending_position(
         """
         SELECT ticker, entry_date, entry_price, initial_stop, current_stop,
                shares_total, shares_remaining, is_de_risked, bars_held, sector,
-               status, signal_price
+               status, signal_price, max_limit_price
         FROM active_positions
         WHERE ticker = ?
         """,
@@ -360,20 +386,7 @@ def confirm_pending_position(
     if row is None:
         return None
     if str(row["status"]) != STATUS_PENDING_OPEN:
-        return ActivePosition(
-            ticker=row["ticker"],
-            entry_date=row["entry_date"],
-            entry_price=float(row["entry_price"]),
-            initial_stop=float(row["initial_stop"]),
-            current_stop=float(row["current_stop"]),
-            shares_total=int(row["shares_total"]),
-            shares_remaining=int(row["shares_remaining"]),
-            is_de_risked=bool(row["is_de_risked"]),
-            bars_held=int(row["bars_held"]),
-            sector=row["sector"],
-            status=str(row["status"]),
-            signal_price=float(row["signal_price"] or row["entry_price"]),
-        )
+        return _row_to_active_position(row)
 
     signal_price = float(row["signal_price"] or row["entry_price"])
     moment = fill_date or datetime.now(timezone.utc).strftime(ISO_FORMAT)
@@ -400,6 +413,29 @@ def confirm_pending_position(
     for pos in positions:
         if pos.ticker == ticker:
             return pos
+    return None
+
+
+def pending_fill_abort_reason(
+    *,
+    fill_price: float,
+    stop: float,
+    max_limit_price: float,
+) -> str | None:
+    """Return why a pending→open fill must be cancelled, or None if ok."""
+    if fill_price is None or not isinstance(fill_price, (int, float)):
+        return "next open is missing/invalid"
+    try:
+        price = float(fill_price)
+    except (TypeError, ValueError):
+        return "next open is missing/invalid"
+    if price != price or price <= 0:  # NaN or non-positive
+        return "next open is missing/invalid"
+    if price <= float(stop):
+        return f"open ${price:.2f} <= stop ${float(stop):.2f} (gap through stop)"
+    limit = float(max_limit_price)
+    if limit > 0 and price > limit:
+        return f"open ${price:.2f} exceeds max limit ${limit:.2f}"
     return None
 
 

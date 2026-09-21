@@ -153,6 +153,13 @@ def try_dispatch_buy(
         print(f" -> [BUY COOLDOWN] {ticker}: {result.reason}")
         return False
 
+    if not open_active_position(conn, ticker=ticker, size=size, sector=sector):
+        print(
+            f" -> [UPSERT REFUSED] {ticker}: live position already open "
+            f"(shares_remaining > 0); skip booking."
+        )
+        return False
+
     ctx = _build_alert_context(
         ticker,
         bar,
@@ -174,8 +181,6 @@ def try_dispatch_buy(
         format_setup_html(size, ctx),
         context=f"setup {ticker}",
     )
-    # Book still opens if Telegram fails — send_html_message never raises.
-    open_active_position(conn, ticker=ticker, size=size, sector=sector)
     alerted_sectors.add(sector)
     if not sent:
         print(f" -> [TELEGRAM] setup {ticker}: alert not delivered; PENDING_OPEN still booked.")
@@ -248,6 +253,13 @@ def try_dispatch_inverse(
         alerted_vehicles.add(inverse_ticker)
         return False
 
+    if not open_active_position(conn, ticker=inverse_ticker, size=size, sector=sector):
+        print(
+            f" -> [UPSERT REFUSED] {inverse_ticker}: live position already open "
+            f"(shares_remaining > 0); skip booking."
+        )
+        return False
+
     ctx = _build_alert_context(
         ticker,
         bar,
@@ -269,7 +281,6 @@ def try_dispatch_inverse(
         format_inverse_html(size, ctx, inverse_ticker=inverse_ticker),
         context=f"inverse {inverse_ticker} via {ticker}",
     )
-    open_active_position(conn, ticker=inverse_ticker, size=size, sector=sector)
     alerted_sectors.add(sector)
     alerted_vehicles.add(inverse_ticker)
     if not sent:

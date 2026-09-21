@@ -116,7 +116,7 @@ Workflow: [`.github/workflows/daily_scan.yml`](.github/workflows/daily_scan.yml)
 
 - Runs **Mon–Fri at 16:15 America/Toronto** (4:15 PM ET), plus manual **Run workflow**
 - Add repository secrets: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
-- Caches `signals.db` between CI jobs so cooldowns persist (does not commit the DB to `main`)
+- Caches `signals.db` between CI jobs with a rolling `signals-db-<run_id>` key (plus `signals-db-` restore prefix) so weekday mutations can save; the DB is gitignored and not committed to `main`
 - Writes `dist/index.html` and deploys it to **GitHub Pages** (Settings → Pages → Source: GitHub Actions)
 
 ---

@@ -65,7 +65,7 @@ def portfolio_heat_r(
 
 @dataclass(frozen=True)
 class HeatVeto:
-    """Open-risk reading. `veto` blocks new buys; `log_line` is None when flat."""
+    """Open-risk reading. `veto` blocks new buys/inverses; `log_line` is None when flat."""
 
     open_r: float
     veto: bool
@@ -82,7 +82,10 @@ def evaluate_heat_veto(
     open_r = portfolio_heat_r(positions, unit_risk_cad)
     veto = open_r >= max_heat_r
     if veto:
-        log_line = f" -> [HEAT VETO] Portfolio at {open_r:.1f}R open risk. New buys blocked."
+        log_line = (
+            f" -> [HEAT VETO] Portfolio at {open_r:.1f}R open risk. "
+            "New buys and inverses blocked."
+        )
     elif open_r > 0:
         log_line = f" -> [HEAT] Open portfolio risk: {open_r:.1f}R / {max_heat_r:.0f}R"
     else:
