@@ -168,13 +168,13 @@ def test_illiquid_high_vol_vetoes_edge() -> None:
 
 
 def test_slippage_veto_when_impact_equals_target_edge() -> None:
-    # Construct tau so entry * tau == TARGET_1_R * r exactly → veto (<= 0).
+    # Construct tau so round-trip (2 × entry × τ) == TARGET_1_R * r → veto (<= 0).
     entry, r = 100.0, 3.0
     expected = TARGET_1_R * r  # 4.5
-    # Solve estimate_tau_i for impact == expected: need tau = expected / entry.
+    # Solve estimate_tau_i for 2*entry*tau == expected: need tau = expected / (2*entry).
     # tau = BASE * hist_vol / max(addv,1) * NORM → pick addv=1, solve hist_vol.
-    from thresholds import BASE_SLIPPAGE_BPS, SLIPPAGE_NORM_ADDV
+    from thresholds import BASE_SLIPPAGE_BPS, SLIPPAGE_NORM_ADDV, SLIPPAGE_ROUND_TRIP
 
-    target_tau = expected / entry
+    target_tau = expected / (SLIPPAGE_ROUND_TRIP * entry)
     hist_vol = target_tau / (BASE_SLIPPAGE_BPS * SLIPPAGE_NORM_ADDV)
     assert slippage_destroys_edge(entry, r, addv=1.0, hist_vol=hist_vol)

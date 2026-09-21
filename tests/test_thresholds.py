@@ -32,12 +32,14 @@ def test_sizing_constants_are_thresholds_aliases() -> None:
     assert sizing.MIN_SHARES_FOR_SCALE_OUT is thresholds.MIN_SHARES_FOR_SCALE_OUT
     assert sizing.BASE_SLIPPAGE_BPS is thresholds.BASE_SLIPPAGE_BPS
     assert sizing.SLIPPAGE_NORM_ADDV is thresholds.SLIPPAGE_NORM_ADDV
+    assert sizing.SLIPPAGE_ROUND_TRIP is thresholds.SLIPPAGE_ROUND_TRIP
 
 
 def test_slippage_threshold_defaults() -> None:
     assert thresholds.ADDV_LOOKBACK == 21
     assert thresholds.BASE_SLIPPAGE_BPS == pytest.approx(0.001)
     assert thresholds.SLIPPAGE_NORM_ADDV == pytest.approx(10_000_000_000.0)
+    assert thresholds.SLIPPAGE_ROUND_TRIP == 2
 
 
 def test_universe_constants_are_thresholds_aliases() -> None:

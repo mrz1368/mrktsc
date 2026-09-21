@@ -145,9 +145,7 @@ def try_dispatch_buy(
     if size is None:
         r = ATR_STOP_MULT * bar.atr
         if slippage_destroys_edge(bar.close, r, bar.addv, bar.hist_vol):
-            print(
-                f" -> [REJECTED] {ticker}: Expected slippage/friction exceeds target edge."
-            )
+            print(f" -> [REJECTED] {ticker}: Expected slippage/friction exceeds target edge.")
         return False
 
     result = record_if_allowed(conn, ticker, size, cfg.cooldown_days, alert_type=ALERT_BUY)
@@ -213,28 +211,29 @@ def try_dispatch_inverse(
         print(f" -> [SKIPPED] {ticker}: Inverse vehicle {inverse_ticker} already used.")
         return False
 
-    inv_close = load_inverse_quote(inverse_ticker)
-    if inv_close is None:
+    inv = load_inverse_quote(inverse_ticker)
+    if inv is None:
         print(f" -> [SKIPPED] {inverse_ticker}: could not load inverse quote.")
         return False
-    # Prefer inverse-vehicle ADDV/hist_vol when available; fall back to underlying.
+    # Size and slip on the inverse vehicle's ADDV/hist_vol; underlying bar
+    # still drives technical flags and ATR stop translation.
     size = size_inverse_from_underlying(
         underlying_close=bar.close,
         underlying_atr=bar.atr,
-        inverse_close=inv_close,
+        inverse_close=inv.close,
         leverage_factor=inverse_leverage(inverse_ticker),
         risk_cad=dynamic_risk_cad,
-        addv=bar.addv,
-        hist_vol=bar.hist_vol,
+        addv=inv.addv,
+        hist_vol=inv.hist_vol,
     )
     if size is None:
         if bar.close > 0:
             inv_stop_pct = ((ATR_STOP_MULT * bar.atr) / bar.close) * inverse_leverage(
                 inverse_ticker
             )
-            inv_atr = (inv_close * inv_stop_pct) / ATR_STOP_MULT
+            inv_atr = (inv.close * inv_stop_pct) / ATR_STOP_MULT
             inv_r = ATR_STOP_MULT * inv_atr
-            if slippage_destroys_edge(inv_close, inv_r, bar.addv, bar.hist_vol):
+            if slippage_destroys_edge(inv.close, inv_r, inv.addv, inv.hist_vol):
                 print(
                     f" -> [REJECTED] {inverse_ticker}: "
                     "Expected slippage/friction exceeds target edge."

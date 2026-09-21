@@ -19,9 +19,13 @@ ADDV_LOOKBACK = 21  # ~1 calendar month of trading sessions
 
 # --- Ex-ante transaction cost (slippage) veto -------------------------------
 # BASE_SLIPPAGE_BPS is a fraction of price (0.001 = 10 bps), despite the name.
+# Fixed ζ (BASE) is intentional for a solo flat pipeline — not the paper's
+# cross-sectional mean(τ)=10bps dynamic ζ. Do not implement dynamic ζ here.
 BASE_SLIPPAGE_BPS = 0.001
 # Scales tau so ~$100M ADDV at 1% daily hist_vol ≈ BASE (0.1%) cost; thinner names spike.
 SLIPPAGE_NORM_ADDV = 10_000_000_000.0
+# Swing holds pay entry + exit friction: compare 2×(entry×τ) to 1.5R profit.
+SLIPPAGE_ROUND_TRIP = 2
 
 
 # --- Technical gates --------------------------------------------------------

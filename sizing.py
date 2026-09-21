@@ -15,6 +15,7 @@ from thresholds import (
     MIN_SHARES_FOR_SCALE_OUT,
     SCALE_OUT_FRACTION,
     SLIPPAGE_NORM_ADDV,
+    SLIPPAGE_ROUND_TRIP,
     TARGET_1_R,
 )
 
@@ -105,10 +106,10 @@ def slippage_destroys_edge(
     addv: float,
     hist_vol: float,
 ) -> bool:
-    """True when per-share impact cost wipes out the 1.5R expected profit."""
+    """True when round-trip impact (2 × entry × τ) wipes out 1.5R expected profit."""
     if entry <= 0 or r <= 0:
         return True
-    impact_cost_cad = entry * estimate_tau_i(addv, hist_vol)
+    impact_cost_cad = SLIPPAGE_ROUND_TRIP * entry * estimate_tau_i(addv, hist_vol)
     expected_profit_per_share = TARGET_1_R * r
     return expected_profit_per_share - impact_cost_cad <= 0
 
@@ -125,8 +126,8 @@ def size_inverse_from_underlying(
 ) -> PositionSize | None:
     """Translate underlying ATR risk onto the inverse, scaled by |leverage|.
 
-    ``addv`` / ``hist_vol`` should be the vehicle being sized when available;
-    callers without an inverse bar may pass the underlying's liquidity stats.
+    ``addv`` / ``hist_vol`` must be the inverse vehicle being traded (not the
+    underlying). Underlying close/ATR only set the stop distance.
     """
     if underlying_close <= 0 or underlying_atr <= 0:
         return None

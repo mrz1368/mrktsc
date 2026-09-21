@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import pandas as pd
 from yfinance.exceptions import YFRateLimitError
 
-from indicators import add_technical_indicators
+from indicators import add_technical_indicators, snapshot_from_bar
 from market_data import fetch_benchmark_history, fetch_inverse_history, fetch_vix_history
 from thresholds import (
     VIX_FALLBACK,
@@ -115,14 +115,31 @@ def load_benchmark_state() -> BenchmarkState:
         return empty
 
 
-def load_inverse_quote(inverse_ticker: str) -> float | None:
-    """Latest close of a BetaPro inverse ETF."""
+@dataclass(frozen=True)
+class InverseQuote:
+    """Inverse ETF close plus vehicle liquidity metrics for slippage sizing."""
+
+    close: float
+    addv: float
+    hist_vol: float
+
+
+def load_inverse_quote(inverse_ticker: str) -> InverseQuote | None:
+    """Latest close and ADDV/hist_vol of a BetaPro inverse ETF vehicle.
+
+    Fetches a short history (enough for ``ADDV_LOOKBACK``), runs the same
+    indicator path as the scan loop, and snapshots the last bar. Technical
+    flags for the weak underlying stay on the caller's underlying bar.
+    """
     try:
-        inv_df = fetch_inverse_history(inverse_ticker, period="1mo")
+        # 3mo covers ADDV_LOOKBACK (21) with room for pct_change warmup.
+        inv_df = fetch_inverse_history(inverse_ticker, period="3mo")
         if inv_df.empty:
             return None
-        close = float(inv_df["Close"].iloc[-1])
-        return close if close > 0 else None
+        bar = snapshot_from_bar(add_technical_indicators(inv_df).iloc[-1])
+        if bar.close <= 0:
+            return None
+        return InverseQuote(close=bar.close, addv=bar.addv, hist_vol=bar.hist_vol)
     except _SOFT_FAIL as exc:
         print(f"Warning: Could not fetch {inverse_ticker}: {exc}")
         return None
