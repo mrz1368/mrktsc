@@ -7,7 +7,12 @@ import pytest
 from yfinance.exceptions import YFRateLimitError
 
 import market_data
-from market_data import fetch_history_batch, frames_from_download, with_yahoo_retries
+from market_data import (
+    fetch_history_batch,
+    frames_from_download,
+    safe_fetch_batch,
+    with_yahoo_retries,
+)
 
 
 def test_with_yahoo_retries_succeeds_after_rate_limits(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -162,3 +167,42 @@ def test_fetch_history_batch_mocks_yf_download(monkeypatch: pytest.MonkeyPatch) 
 def test_fetch_history_batch_empty_input() -> None:
     assert fetch_history_batch([]) == {}
     assert fetch_history_batch(["", "  "]) == {}
+
+
+def test_safe_fetch_batch_soft_fails_on_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(market_data, "RATE_LIMIT_BACKOFFS", (0.0, 0.0))
+    sleeps: list[float] = []
+    monkeypatch.setattr(market_data.time, "sleep", sleeps.append)
+
+    def boom(*_a: object, **_k: object) -> dict[str, pd.DataFrame]:
+        raise YFRateLimitError()
+
+    monkeypatch.setattr(market_data, "fetch_history_batch", boom)
+    frames, err = safe_fetch_batch(["AAA.TO"], error_label="FILL ERROR")
+    assert frames == {}
+    assert err is not None and "rate limit" in err.lower()
+    assert sleeps == [0.0]  # final backoff only (retries live inside fetch_history_batch)
+
+
+def test_safe_fetch_batch_soft_fails_on_value_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(market_data.time, "sleep", lambda _s: None)
+
+    def boom(*_a: object, **_k: object) -> dict[str, pd.DataFrame]:
+        raise ValueError("bad batch")
+
+    monkeypatch.setattr(market_data, "fetch_history_batch", boom)
+    frames, err = safe_fetch_batch(["AAA.TO"], error_label="EXIT ERROR")
+    assert frames == {}
+    assert err == "Batch history error: bad batch"
+
+
+def test_safe_fetch_batch_passes_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    expected = {"AAA.TO": _ohlcv([1.0, 2.0])}
+
+    def ok(*_a: object, **_k: object) -> dict[str, pd.DataFrame]:
+        return expected
+
+    monkeypatch.setattr(market_data, "fetch_history_batch", ok)
+    frames, err = safe_fetch_batch(["AAA.TO"], period="10d")
+    assert err is None
+    assert frames is expected

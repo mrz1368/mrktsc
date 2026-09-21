@@ -18,9 +18,12 @@ MAX_CLV_BEAR = 0.40
 
 # --- Technical gates --------------------------------------------------------
 WATCH_MAX_DIST_TO_200_PCT = 3.0
+# Watch / radar invalidation = SMA200 * (1 - buffer).
+WATCH_INVALIDATION_BUFFER = 0.015
 
 # --- Sizing / portfolio heat ------------------------------------------------
 ATR_STOP_MULT = 1.5
+WATCH_R_ATR_MULT = ATR_STOP_MULT  # watch R uses the same 1.5×ATR multiple as stops
 TARGET_1_R = 1.5
 SCALE_OUT_FRACTION = 1.0 / 3.0
 MAX_PORTFOLIO_HEAT_R = 6.0

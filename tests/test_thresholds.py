@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import fundamentals
 import gates
 import indicators
@@ -44,3 +46,9 @@ def test_fundamentals_and_gates_use_thresholds() -> None:
     assert fundamentals.MIN_INTEREST_COVERAGE is thresholds.MIN_INTEREST_COVERAGE
     assert fundamentals.EARNINGS_BLACKOUT_AHEAD_DAYS is (thresholds.EARNINGS_BLACKOUT_AHEAD_DAYS)
     assert gates.WATCH_MAX_DIST_TO_200_PCT is thresholds.WATCH_MAX_DIST_TO_200_PCT
+
+
+def test_watch_thresholds() -> None:
+    assert thresholds.WATCH_INVALIDATION_BUFFER == 0.015
+    assert thresholds.WATCH_R_ATR_MULT is thresholds.ATR_STOP_MULT
+    assert 1.0 - thresholds.WATCH_INVALIDATION_BUFFER == pytest.approx(0.985)

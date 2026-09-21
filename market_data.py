@@ -212,6 +212,33 @@ def fetch_history_batch(
     return frames_from_download(raw, ordered)
 
 
+def safe_fetch_batch(
+    tickers: Iterable[str],
+    *,
+    period: str = "18mo",
+    interval: str = "1d",
+    error_label: str = "BATCH ERROR",
+) -> tuple[dict[str, pd.DataFrame], str | None]:
+    """Like :func:`fetch_history_batch`, but soft-fails after retries are exhausted.
+
+    On ``YFRateLimitError`` (post-retry) or other soft I/O/parse errors: log under
+    ``error_label``, sleep the final backoff on rate limits, and return
+    ``({}, reason)``. Success returns ``(frames, None)``. Does not stack another
+    retry layer on top of :func:`with_yahoo_retries`.
+    """
+    try:
+        return fetch_history_batch(tickers, period=period, interval=interval), None
+    except YFRateLimitError as exc:
+        reason = f"Yahoo rate limit after retries: {exc}"
+        print(f" -> [{error_label}] {reason}")
+        time.sleep(RATE_LIMIT_BACKOFFS[-1])
+        return {}, reason
+    except (ValueError, TypeError, KeyError, IndexError, OSError, RuntimeError) as exc:
+        reason = f"Batch history error: {exc}"
+        print(f" -> [{error_label}] {reason}")
+        return {}, reason
+
+
 def fetch_vix_history(*, period: str = "5d") -> pd.DataFrame:
     """Short VIX daily history used by regime scaling."""
     return fetch_history("^VIX", period=period, interval="1d")

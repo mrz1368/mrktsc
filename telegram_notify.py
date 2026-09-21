@@ -21,6 +21,7 @@ from thresholds import (
     MIN_INTEREST_COVERAGE,
     MIN_RVOL,
     SENTIMENT_FAVORABLE_MAX,
+    WATCH_INVALIDATION_BUFFER,
 )
 
 TELEGRAM_API = "https://api.telegram.org"
@@ -246,7 +247,7 @@ def format_watchlist_html(
 ) -> str:
     """Formats a developing setup for manual watchlist monitoring."""
     safe_ticker = html.escape(ctx.ticker)
-    invalidation = ctx.sma200 * 0.985
+    invalidation = ctx.sma200 * (1.0 - WATCH_INVALIDATION_BUFFER)
     # ctx.pullback_pct for watch cards is signed: (SMA50 - close) / SMA50 * 100.
     # Positive => below the 50 SMA; negative => above.
     if ctx.pullback_pct > 0:

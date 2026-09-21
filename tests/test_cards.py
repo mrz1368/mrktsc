@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+import thresholds
 from cards import daily_change_pct, dashboard_card, skipped_dashboard_card
 from fundamentals import FundamentalsResult
 from indicators import BarSnapshot, SetupFlags
@@ -105,7 +106,9 @@ def test_dashboard_card_template_keys_and_signed_distance(make_ohlcv) -> None:
     assert set(payload) == TEMPLATE_KEYS
     assert payload["dist_to_50_pct"] == pytest.approx(2.0)
     assert payload["above_sma50"] is True
-    assert payload["invalidation_price"] == pytest.approx(90.0 * 0.985)
+    assert payload["invalidation_price"] == pytest.approx(
+        90.0 * (1.0 - thresholds.WATCH_INVALIDATION_BUFFER)
+    )
     assert payload["fund_notes"] == "thin book ok"
     assert payload["change_pct"] == pytest.approx(2.0)
     assert payload["sma50"] == 100.0

@@ -171,18 +171,5 @@ def liquidity_filter_reason(
     return None
 
 
-def filter_by_dollar_liquidity(
-    df: pd.DataFrame,
-    min_mddv: float = MIN_MDDV_CAD,
-    min_price: float = MIN_PRICE_CAD,
-) -> bool:
-    """Evaluate 20-day Median Daily Dollar Volume (MDDV) and price floor.
-
-    Prevents allocating into micro-liquidity traps or executing inside
-    wide bid-ask spreads where market impact eats alpha.
-    """
-    return liquidity_filter_reason(df, min_mddv=min_mddv, min_price=min_price) is None
-
-
 # Active scanning universe (flat list ready for the orchestrator loop)
 TSX_WATCHLIST = get_all_universe_tickers()

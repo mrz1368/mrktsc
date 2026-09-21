@@ -10,6 +10,7 @@ import pandas as pd
 from fundamentals import FundamentalsResult
 from indicators import BarSnapshot, SetupFlags
 from sentiment import NewsVelocityResult
+from thresholds import WATCH_INVALIDATION_BUFFER
 from universe import ticker_sector
 
 
@@ -85,7 +86,7 @@ def dashboard_card(
         ),
         above_sma50=bar.close >= bar.sma_50,
         dist_to_200_pct=flags.dist_to_200_sma_pct,
-        invalidation_price=bar.sma_200 * 0.985,
+        invalidation_price=bar.sma_200 * (1.0 - WATCH_INVALIDATION_BUFFER),
         debt_safe=fund.debt_safe,
         fcf_positive=fund.fcf_positive,
         earnings_conflict=fund.earnings_conflict,
