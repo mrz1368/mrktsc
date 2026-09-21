@@ -62,6 +62,7 @@ def scan_market() -> None:
     alerted_sectors: set[str] = set(active_sectors(conn))
     alerted_vehicles: set[str] = set()
     setups_dispatched = 0
+    watches_dispatched = 0
     dashboard_cards: list[DashboardCard] = []
 
     # Placeholder rows for names that fail the technical pre-screen (no Yahoo I/O).
@@ -183,6 +184,7 @@ def scan_market() -> None:
                     passes_fundamentals=fund.passes_fundamentals,
                     headlines_clean=news.headlines_clean,
                     earnings_conflict=fund.earnings_conflict,
+                    is_extreme_greed=is_extreme_greed,
                 )
 
                 dashboard_cards.append(
@@ -230,6 +232,18 @@ def scan_market() -> None:
                         alerted_sectors=alerted_sectors,
                     ):
                         setups_dispatched += 1
+                        prev_veto = heat.veto
+                        heat = evaluate_heat_veto(
+                            list_active_positions(conn), dynamic_risk_cad
+                        )
+                        if heat.veto and not prev_veto:
+                            print(
+                                heat.log_line
+                                or (
+                                    f" -> [HEAT VETO] Portfolio at {heat.open_r:.1f}R "
+                                    "open risk. Mid-scan veto on."
+                                )
+                            )
                 elif armed.is_valid_inverse:
                     if heat.veto:
                         print(
@@ -253,8 +267,20 @@ def scan_market() -> None:
                         alerted_vehicles=alerted_vehicles,
                     ):
                         setups_dispatched += 1
+                        prev_veto = heat.veto
+                        heat = evaluate_heat_veto(
+                            list_active_positions(conn), dynamic_risk_cad
+                        )
+                        if heat.veto and not prev_veto:
+                            print(
+                                heat.log_line
+                                or (
+                                    f" -> [HEAT VETO] Portfolio at {heat.open_r:.1f}R "
+                                    "open risk. Mid-scan veto on."
+                                )
+                            )
                 elif armed.is_watch:
-                    try_dispatch_watch(
+                    if try_dispatch_watch(
                         conn=conn,
                         cfg=cfg,
                         ticker=ticker,
@@ -267,7 +293,8 @@ def scan_market() -> None:
                         vix_close=vix_close,
                         vix_mult=vix_mult,
                         dynamic_risk_cad=dynamic_risk_cad,
-                    )
+                    ):
+                        watches_dispatched += 1
                 elif tech.needs_deep_scan and fund.earnings_conflict:
                     print(f" -> [SKIP] {ticker}: {fund.notes}")
                 elif flags.is_macro_bullish and flags.is_in_pullback:
@@ -306,6 +333,7 @@ def scan_market() -> None:
                     vix_close=vix_close,
                     vix_mult=vix_mult,
                     is_bear=market_regime == "BEAR",
+                    watches_on_radar=watches_dispatched,
                 ),
                 context="idle cash",
             )

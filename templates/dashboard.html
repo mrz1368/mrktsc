@@ -20,11 +20,12 @@
     }
     function filterCards(category) {
       document.querySelectorAll('.ticker-card').forEach(el => {
-        if (category === 'all' || el.dataset.category === category) {
-          el.style.display = 'block';
-        } else {
-          el.style.display = 'none';
-        }
+        const cat = el.dataset.category;
+        const show =
+          category === 'all' ||
+          cat === category ||
+          (category === 'neutral' && (cat === 'neutral' || cat === 'blocked'));
+        el.style.display = show ? 'block' : 'none';
       });
       document.querySelectorAll('.filter-btn').forEach(btn => {
         btn.classList.remove('bg-blue-600', 'text-white');
@@ -88,7 +89,7 @@
     <!-- Filter Buttons -->
     {% set setup_n = cards | selectattr('category', 'equalto', 'setup') | list | length %}
     {% set watch_n = cards | selectattr('category', 'equalto', 'watch') | list | length %}
-    {% set neutral_n = cards | selectattr('category', 'equalto', 'neutral') | list | length %}
+    {% set neutral_n = cards | rejectattr('category', 'equalto', 'setup') | rejectattr('category', 'equalto', 'watch') | list | length %}
     <div class="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
       <button id="btn-all" onclick="filterCards('all')" class="filter-btn px-3.5 py-1.5 rounded-lg font-medium bg-blue-600 text-white transition">All Watchlist ({{ cards|length }})</button>
       <button id="btn-setup" onclick="filterCards('setup')" class="filter-btn px-3.5 py-1.5 rounded-lg font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 transition">Actionable Setups ({{ setup_n }})</button>
@@ -138,6 +139,8 @@
               <span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">ACTIONABLE SETUP</span>
             {% elif card.category == 'watch' %}
               <span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/40">WATCH RADAR</span>
+            {% elif card.category == 'blocked' %}
+              <span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/40">Blocked: Extreme Greed</span>
             {% else %}
               <span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-800 text-slate-400 border border-slate-700">FILTERED</span>
             {% endif %}
@@ -244,20 +247,49 @@
               </span>
             </span>
           </div>
+
+          {# CLV candle confirmation #}
+          {% set clv = card.clv|default(0.5) %}
+          {% set clv_bull = clv >= thresholds.min_clv_bull %}
+          {% set clv_bear = clv <= thresholds.max_clv_bear %}
+          <div class="flex justify-between items-start gap-3">
+            <span class="text-slate-400">Candle CLV:</span>
+            <span class="font-mono text-right leading-tight {% if clv_bull %}text-emerald-400{% elif clv_bear %}text-rose-400{% else %}text-slate-300{% endif %}">
+              {{ '✔' if clv_bull else ('✘' if clv_bear else '·') }} {{ "%.2f"|format(clv) }}
+              <span class="block text-[10px] font-sans {% if clv_bull %}text-emerald-400/70{% elif clv_bear %}text-rose-400/55{% else %}text-slate-500{% endif %}">
+                {% if clv_bull %}
+                bull confirmation (≥{{ "%.2f"|format(thresholds.min_clv_bull) }})
+                {% elif clv_bear %}
+                bear rejection (≤{{ "%.2f"|format(thresholds.max_clv_bear) }})
+                {% else %}
+                mid-range wick
+                {% endif %}
+              </span>
+            </span>
+          </div>
           {% endif %}
         </div>
 
         <!-- Compact Risk & Catalyst Summary -->
         <div class="flex flex-wrap gap-1.5 text-[11px]">
-          {% if card.deep_scanned and not card.metadata_complete %}
+          {% if not card.deep_scanned %}
+            {% if card.fund_notes and card.fund_notes.startswith('Scan error') %}
+            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-rose-500/15 text-rose-400 border border-rose-500/30">⚠️ Scan error</span>
+            {% else %}
+            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-slate-800/80 text-slate-500 border border-slate-700/80">⚡ Fundamentals: Skipped</span>
+            {% endif %}
+          {% elif card.category == 'blocked' %}
+          <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-rose-500/15 text-rose-400 border border-rose-500/30">⚠️ Blocked: Extreme Greed</span>
+          {% elif card.deep_scanned and not card.metadata_complete %}
           <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-amber-500/15 text-amber-400 border border-amber-500/30">⚠️ Unverified Fundamentals</span>
           {% endif %}
-          {% if card.category == 'setup' or card.category == 'watch' %}
+          {% if card.deep_scanned and (card.category == 'setup' or card.category == 'watch') %}
           {% if card.metadata_complete %}
           <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">🛡️ Fundamentals: Verified</span>
           {% endif %}
           <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-slate-800 text-slate-300 border border-slate-700">📰 News: Clean</span>
-          {% elif card.earnings_conflict %}
+          {% elif card.deep_scanned and card.category != 'blocked' %}
+          {% if card.earnings_conflict %}
           <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-rose-500/15 text-rose-400 border border-rose-500/30">⚠️ Blocked: Earnings Blackout</span>
           {% elif not card.debt_safe or not card.fcf_positive %}
           <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-rose-500/15 text-rose-400 border border-rose-500/30">⚠️ Blocked: Fundamental Quality</span>
@@ -265,6 +297,7 @@
           <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-amber-500/15 text-amber-400 border border-amber-500/30">⚠️ Blocked: Negative Headline Cycle</span>
           {% else %}
           <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-slate-800/80 text-slate-500 border border-slate-700/80">⚡ Fundamentals: Skipped (Tech Failed)</span>
+          {% endif %}
           {% endif %}
         </div>
 

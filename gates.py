@@ -103,6 +103,7 @@ class ArmedSetup:
     is_valid_buy: bool
     is_valid_inverse: bool
     is_watch: bool
+    blocked_extreme_greed: bool = False
 
     @property
     def category(self) -> str:
@@ -110,6 +111,8 @@ class ArmedSetup:
             return "setup"
         if self.is_watch:
             return "watch"
+        if self.blocked_extreme_greed:
+            return "blocked"
         return "neutral"
 
 
@@ -119,17 +122,19 @@ def arm_setup(
     passes_fundamentals: bool,
     headlines_clean: bool,
     earnings_conflict: bool,
+    is_extreme_greed: bool = False,
 ) -> ArmedSetup:
-    """Final confirmation with fundamental / news gates."""
+    """Final confirmation with fundamental / news / regime gates.
+
+    Extreme greed blocks long buys (dashboard + dispatch stay aligned) but does
+    not block bear-regime inverses. Watch is already gated in ``is_tech_watch``.
+    """
+    fund_ok = passes_fundamentals and headlines_clean and not earnings_conflict
+    would_buy = tech.is_tech_buy and fund_ok
+    blocked_extreme_greed = would_buy and is_extreme_greed
     return ArmedSetup(
-        is_valid_buy=(
-            tech.is_tech_buy and passes_fundamentals and headlines_clean and not earnings_conflict
-        ),
-        is_valid_inverse=(
-            tech.is_tech_inverse
-            and passes_fundamentals
-            and headlines_clean
-            and not earnings_conflict
-        ),
+        is_valid_buy=would_buy and not is_extreme_greed,
+        is_valid_inverse=tech.is_tech_inverse and fund_ok,
         is_watch=(tech.is_tech_watch and passes_fundamentals and headlines_clean),
+        blocked_extreme_greed=blocked_extreme_greed,
     )

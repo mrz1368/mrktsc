@@ -99,12 +99,14 @@ def test_bounce_clv_confirmation() -> None:
         benchmark_return=0.05,
     )
     assert confirmed.is_bounce_confirmed is True
+    assert confirmed.clv == pytest.approx(0.75)
 
     weak_clv = evaluate_setup_flags(
         _bar(open=99.0, low=98.0, high=102.0, close=99.5),  # CLV=0.375
         benchmark_return=0.05,
     )
     assert weak_clv.is_bounce_confirmed is False
+    assert weak_clv.clv == pytest.approx(0.375)
 
     red_candle = evaluate_setup_flags(
         _bar(open=101.0, low=98.0, high=102.0, close=100.0),  # green CLV but down day

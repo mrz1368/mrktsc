@@ -48,6 +48,7 @@ def generate_dashboard(
             "min_rvol": thr.MIN_RVOL,
             "pullback_max_pct": thr.PULLBACK_MAX_PCT,
             "min_clv_bull": thr.MIN_CLV_BULL,
+            "max_clv_bear": thr.MAX_CLV_BEAR,
             "sma_slope_lookback": thr.SMA_SLOPE_LOOKBACK,
             "min_mddv_cad": thr.MIN_MDDV_CAD,
             "min_price_cad": thr.MIN_PRICE_CAD,

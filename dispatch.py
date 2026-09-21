@@ -311,7 +311,7 @@ def try_dispatch_watch(
     vix_close: float,
     vix_mult: float,
     dynamic_risk_cad: float,
-) -> None:
+) -> bool:
     watch_size = PositionSize(
         entry=bar.close,
         atr=bar.atr,
@@ -327,7 +327,7 @@ def try_dispatch_watch(
     result = record_if_allowed(conn, ticker, watch_size, cfg.cooldown_days, alert_type=ALERT_WATCH)
     if not result.inserted:
         print(f" -> [WATCH COOLDOWN] {ticker}: {result.reason}")
-        return
+        return False
 
     ctx = _build_alert_context(
         ticker,
@@ -358,3 +358,4 @@ def try_dispatch_watch(
         print(f" -> [WATCHLIST RADAR] {ticker} sent to Telegram.")
     else:
         print(f" -> [WATCHLIST RADAR] {ticker}: Telegram send failed; scan continues.")
+    return True

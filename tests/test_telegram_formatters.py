@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from sizing import PositionSize
-from telegram_notify import AlertContext, format_exit_html, format_setup_html
+from telegram_notify import AlertContext, format_exit_html, format_idle_cash_html, format_setup_html
 
 
 def _ctx(*, metadata_complete: bool = True) -> AlertContext:
@@ -84,3 +84,23 @@ def test_exit_html_includes_eod_mark_disclaimer() -> None:
     assert "EOD close" in html
     assert "tomorrow's open" in html
     assert "optimistic mark" in html
+
+
+def test_idle_cash_html_notes_watches_on_radar() -> None:
+    plain = format_idle_cash_html(
+        cash_etf="CASH.TO",
+        vix_close=18.0,
+        vix_mult=1.0,
+        is_bear=False,
+        watches_on_radar=0,
+    )
+    assert "Watches on radar" not in plain
+
+    with_watches = format_idle_cash_html(
+        cash_etf="CASH.TO",
+        vix_close=18.0,
+        vix_mult=1.0,
+        is_bear=False,
+        watches_on_radar=3,
+    )
+    assert "Watches on radar:</b> 3" in with_watches

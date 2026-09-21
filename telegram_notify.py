@@ -318,9 +318,13 @@ def format_idle_cash_html(
     vix_close: float,
     vix_mult: float,
     is_bear: bool,
+    watches_on_radar: int = 0,
 ) -> str:
     regime = "BEAR (XIU below 200 SMA)" if is_bear else "BULL"
     safe_cash = html.escape(cash_etf)
+    watch_line = ""
+    if watches_on_radar > 0:
+        watch_line = f"• <b>Watches on radar:</b> {watches_on_radar}\n"
     return (
         f"💤 <b>IDLE CASH SWEEP | {safe_cash}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -328,6 +332,7 @@ def format_idle_cash_html(
         f"• <b>Action:</b> Keep 100% parked in {safe_cash} (T-bill / HISA yield).\n"
         f"• <b>Market regime:</b> {regime}\n"
         f"• <b>VIX:</b> {vix_close:.1f} ➔ risk multiplier x{vix_mult:.2f}\n"
+        f"{watch_line}"
         f"• When a 🟢/🔴 setup fires, sell only the CAD needed from {safe_cash}.\n"
         f"\n"
         f"⏰ <b>Generated:</b> {datetime.now(ZoneInfo('America/Toronto')).strftime('%Y-%m-%d %H:%M')}"

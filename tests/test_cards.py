@@ -37,6 +37,7 @@ TEMPLATE_KEYS = {
     "fund_notes",
     "metadata_complete",
     "deep_scanned",
+    "clv",
 }
 
 
@@ -89,6 +90,7 @@ def test_dashboard_card_template_keys_and_signed_distance(make_ohlcv) -> None:
         is_trend_strong=True,
         is_bull_bulletproof=True,
         is_bear_bulletproof=False,
+        clv=0.75,
     )
     fund = FundamentalsResult(
         earnings_conflict=False,
@@ -122,6 +124,7 @@ def test_dashboard_card_template_keys_and_signed_distance(make_ohlcv) -> None:
     assert payload["sma50"] == 100.0
     assert payload["metadata_complete"] is True
     assert payload["deep_scanned"] is True
+    assert payload["clv"] == pytest.approx(0.75)
 
 
 def test_dashboard_card_unverified_when_deep_scanned_incomplete(make_ohlcv) -> None:
@@ -198,9 +201,32 @@ def test_skipped_card_is_neutral_placeholder() -> None:
     assert payload["category"] == "neutral"
     assert payload["sector"] == "Financials"
     assert payload["headlines_clean"] is True
+    assert payload["debt_safe"] is True
+    assert payload["fcf_positive"] is True
     assert payload["fund_notes"] == "No price history from Yahoo."
     assert payload["close"] == 0.0
     assert payload["deep_scanned"] is False
+
+
+def test_skipped_card_html_not_fundamental_quality_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import dashboard as dashboard_mod
+
+    monkeypatch.setattr(dashboard_mod, "DIST_DIR", tmp_path)
+    card = skipped_dashboard_card("RY.TO", "No price history from Yahoo.")
+    out = generate_dashboard(
+        [card],
+        regime="BULL",
+        vix_val=18.5,
+        vix_mult=1.0,
+        sentiment_score=45.0,
+        sentiment_rating="neutral",
+        cash_etf="CASH.TO",
+    )
+    html = out.read_text(encoding="utf-8")
+    assert "Blocked: Fundamental Quality" not in html
+    assert "Fundamentals: Skipped" in html
 
 
 def test_generate_dashboard_accepts_typed_cards(

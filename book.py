@@ -21,6 +21,7 @@ from db import (
 )
 from exits import ExitAction, evaluate_institutional_exit
 from fundamentals import days_to_next_earnings
+from indicators import add_technical_indicators
 from market_data import (
     RATE_LIMIT_BACKOFFS,
     call_ticker,
@@ -28,7 +29,36 @@ from market_data import (
 )
 from sizing import stops_after_pending_fill
 from telegram_notify import format_exit_html, send_html_message
+from thresholds import MAX_LIMIT_ATR_FRACTION
 from universe import CASH_ETF, SECTOR_INVERSE_MAP
+
+
+def _legacy_max_limit_from_history(
+    df: pd.DataFrame,
+    *,
+    signal_price: float,
+) -> float:
+    """Recompute max limit for legacy PENDING_OPEN rows with max_limit_price == 0."""
+    if signal_price <= 0 or df.empty:
+        return 0.0
+    atr = 0.0
+    try:
+        ind = add_technical_indicators(df)
+        atr_series = (
+            ind["ATR_14"].dropna() if "ATR_14" in ind.columns else pd.Series(dtype=float)
+        )
+        if not atr_series.empty:
+            atr = float(atr_series.iloc[-1])
+        elif "High" in df.columns and "Low" in df.columns:
+            # Confirm windows can be shorter than Wilder warmup; use mean range.
+            ranges = (df["High"].astype(float) - df["Low"].astype(float)).dropna()
+            if not ranges.empty:
+                atr = float(ranges.mean())
+    except (TypeError, ValueError, KeyError, IndexError):
+        return 0.0
+    if atr <= 0:
+        return 0.0
+    return signal_price + (MAX_LIMIT_ATR_FRACTION * atr)
 
 TICKER_PAUSE_SEC = 0.8
 
@@ -114,10 +144,20 @@ def confirm_pending_opens(conn: sqlite3.Connection, cfg: Config) -> None:
                 )
                 continue
 
+            max_limit = float(pos.max_limit_price)
+            if max_limit <= 0:
+                max_limit = _legacy_max_limit_from_history(
+                    df, signal_price=float(pos.signal_price)
+                )
+                if max_limit > 0:
+                    print(
+                        f" -> [FILL LIMIT] {ticker}: legacy max_limit=0; "
+                        f"recomputed ${max_limit:.2f} from signal ATR."
+                    )
             abort = pending_fill_abort_reason(
                 fill_price=fill_price,
                 stop=pos.initial_stop,
-                max_limit_price=pos.max_limit_price,
+                max_limit_price=max_limit,
             )
             if abort is not None:
                 _abort_pending_fill(conn, cfg, ticker=ticker, reason=abort)

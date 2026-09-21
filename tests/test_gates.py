@@ -45,7 +45,7 @@ def test_tech_buy_requires_bull_pullback_stack() -> None:
     assert is_tech_buy(market_regime="BULL", flags=flags, illiquid=False) is True
     assert is_tech_buy(market_regime="BEAR", flags=flags, illiquid=False) is False
     assert is_tech_buy(market_regime="BULL", flags=flags, illiquid=True) is False
-    # Extreme greed is not a technical-buy input; the dispatch reject owns that veto.
+    # Extreme greed still screens as tech_buy (deep scan); arm_setup owns the veto.
     screen = screen_technical(
         market_regime="BULL",
         flags=flags,
@@ -166,6 +166,17 @@ def test_arm_setup_category_and_earnings_gate() -> None:
     assert blocked.is_valid_buy is False
     assert blocked.category == "neutral"
 
+    greed = arm_setup(
+        tech,
+        passes_fundamentals=True,
+        headlines_clean=True,
+        earnings_conflict=False,
+        is_extreme_greed=True,
+    )
+    assert greed.is_valid_buy is False
+    assert greed.blocked_extreme_greed is True
+    assert greed.category == "blocked"
+
     quiet = screen_technical(
         market_regime="BULL",
         flags=_flags(),
@@ -179,3 +190,28 @@ def test_arm_setup_category_and_earnings_gate() -> None:
         earnings_conflict=False,
     )
     assert neutral.category == "neutral"
+
+
+def test_arm_setup_extreme_greed_does_not_block_inverse() -> None:
+    tech = screen_technical(
+        market_regime="BEAR",
+        flags=_flags(
+            is_macro_bearish=True,
+            is_at_resistance=True,
+            is_rs_laggard=True,
+            is_rejection_confirmed=True,
+            is_bear_bulletproof=True,
+        ),
+        illiquid=False,
+        is_extreme_greed=True,
+    )
+    armed = arm_setup(
+        tech,
+        passes_fundamentals=True,
+        headlines_clean=True,
+        earnings_conflict=False,
+        is_extreme_greed=True,
+    )
+    assert armed.is_valid_inverse is True
+    assert armed.category == "setup"
+    assert armed.blocked_extreme_greed is False

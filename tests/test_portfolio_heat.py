@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from sizing import MAX_PORTFOLIO_HEAT_R, evaluate_heat_veto, portfolio_heat_r
 
@@ -76,3 +77,51 @@ def test_heat_veto_decision_and_log_lines() -> None:
         " -> [HEAT VETO] Portfolio at 6.0R open risk. "
         "New buys and inverses blocked."
     )
+
+
+def test_heat_veto_flips_after_booking_position(tmp_path: Path) -> None:
+    """Mid-scan refresh: re-evaluate heat after open_active_position books ~1R."""
+    from db import connect, list_active_positions, open_active_position
+    from sizing import PositionSize
+
+    conn = connect(tmp_path / "heat.db")
+    unit = 10.0
+    for i in range(5):
+        size = PositionSize(
+            entry=100.0,
+            atr=2.0 / 1.5,
+            r=1.0,
+            stop=99.0,
+            target_1=101.5,
+            shares=10,
+            t1_shares=4,
+            runner_shares=6,
+            risk_cad=unit,
+            max_limit_price=100.3,
+        )
+        assert open_active_position(
+            conn, ticker=f"T{i}.TO", size=size, sector=f"S{i}"
+        )
+
+    before = evaluate_heat_veto(list_active_positions(conn), unit)
+    assert before.veto is False
+    assert before.open_r == 5.0
+
+    sixth = PositionSize(
+        entry=100.0,
+        atr=2.0 / 1.5,
+        r=1.0,
+        stop=99.0,
+        target_1=101.5,
+        shares=10,
+        t1_shares=4,
+        runner_shares=6,
+        risk_cad=unit,
+        max_limit_price=100.3,
+    )
+    assert open_active_position(conn, ticker="T5.TO", size=sixth, sector="S5")
+    after = evaluate_heat_veto(list_active_positions(conn), unit)
+    assert after.open_r == 6.0
+    assert after.veto is True
+    assert after.log_line is not None
+    assert "HEAT VETO" in after.log_line

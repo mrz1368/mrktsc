@@ -154,6 +154,7 @@ class SetupFlags:
     is_trend_strong: bool
     is_bull_bulletproof: bool
     is_bear_bulletproof: bool
+    clv: float = 0.5
 
 
 def snapshot_from_bar(row: pd.Series) -> BarSnapshot:
@@ -238,4 +239,5 @@ def evaluate_setup_flags(bar: BarSnapshot, benchmark_return: float) -> SetupFlag
         is_trend_strong=is_trend_strong,
         is_bull_bulletproof=is_bull_bulletproof,
         is_bear_bulletproof=is_bear_bulletproof,
+        clv=clv,
     )

@@ -49,6 +49,7 @@ class DashboardCard:
     fund_notes: str
     metadata_complete: bool = True
     deep_scanned: bool = False
+    clv: float = 0.5
 
     def to_template_dict(self) -> dict[str, Any]:
         """Flat dict for Jinja. Keys are the template contract."""
@@ -98,6 +99,7 @@ def dashboard_card(
         fund_notes=notes,
         metadata_complete=fund.metadata_complete,
         deep_scanned=deep_scanned,
+        clv=flags.clv,
     )
 
 
@@ -107,6 +109,8 @@ def skipped_dashboard_card(
     close: float = 0.0,
     change_pct: float = 0.0,
 ) -> DashboardCard:
+    # Neutral fund placeholders: template prefers not-deep_scanned → Skipped,
+    # so False quality flags must not surface as "Blocked: Fundamental Quality".
     return DashboardCard(
         ticker=ticker,
         sector=ticker_sector(ticker),
@@ -124,11 +128,12 @@ def skipped_dashboard_card(
         above_sma50=False,
         dist_to_200_pct=0.0,
         invalidation_price=0.0,
-        debt_safe=False,
-        fcf_positive=False,
+        debt_safe=True,
+        fcf_positive=True,
         earnings_conflict=False,
         headlines_clean=True,
         fund_notes=reason,
         metadata_complete=False,
         deep_scanned=False,
+        clv=0.5,
     )
