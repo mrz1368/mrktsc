@@ -15,7 +15,7 @@ from config import load_config
 from dashboard import generate_dashboard
 from db import active_sectors, connect, list_active_positions
 from dispatch import try_dispatch_buy, try_dispatch_inverse, try_dispatch_watch
-from fundamentals import FundamentalsResult, evaluate_fundamentals
+from fundamentals import FundamentalsResult
 from gates import arm_setup, screen_technical
 from indicators import (
     add_technical_indicators,
@@ -24,13 +24,13 @@ from indicators import (
 )
 from market_data import (
     RATE_LIMIT_BACKOFFS,
-    call_ticker,
+    fetch_fundamentals,
+    fetch_news_velocity,
     safe_fetch_batch,
 )
 from regime import get_vix_multiplier, load_benchmark_state
 from sentiment import (
     NewsVelocityResult,
-    evaluate_news_velocity,
     get_macro_sentiment,
 )
 from sizing import evaluate_heat_veto
@@ -163,16 +163,8 @@ def scan_market() -> None:
 
                 # 4. Inverted funnel: fundamentals/news only if technicals arm.
                 if tech.needs_deep_scan:
-                    fund = call_ticker(
-                        f"{ticker} fundamentals",
-                        ticker,
-                        evaluate_fundamentals,
-                    )
-                    news = call_ticker(
-                        f"{ticker} news",
-                        ticker,
-                        evaluate_news_velocity,
-                    )
+                    fund = fetch_fundamentals(ticker)
+                    news = fetch_news_velocity(ticker)
                     time.sleep(TICKER_PAUSE_SEC)
                 else:
                     fund = dummy_fund
@@ -181,9 +173,11 @@ def scan_market() -> None:
                 # 5. Final confirmation with fundamental / news gates.
                 armed = arm_setup(
                     tech,
-                    passes_fundamentals=fund.passes_fundamentals,
-                    headlines_clean=news.headlines_clean,
                     earnings_conflict=fund.earnings_conflict,
+                    debt_safe=fund.debt_safe,
+                    fcf_positive=fund.fcf_positive,
+                    quality_ok=fund.quality_ok,
+                    headlines_clean=news.headlines_clean,
                     is_extreme_greed=is_extreme_greed,
                 )
 

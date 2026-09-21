@@ -1,4 +1,9 @@
-"""Macro Fear & Greed plus per-ticker headline velocity checks."""
+"""Macro Fear & Greed plus per-ticker headline velocity checks.
+
+CNN Fear & Greed is a thin HTTP client (not Yahoo) — intentionally outside
+``market_data`` retries. Per-ticker news uses yfinance and must go through
+``market_data.fetch_news_velocity`` / ``call_ticker`` in production.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 import yfinance as yf
 
+from market_data import YAHOO_RETRYABLE
 from thresholds import (
     EXTREME_GREED_SCORE,
     NEWS_LOOKBACK_DAYS,
@@ -149,13 +155,20 @@ def _headline_text(item: dict) -> str:
 
 
 def evaluate_news_velocity(ticker_obj: yf.Ticker) -> NewsVelocityResult:
-    """Flag active negative headline cycles over the lookback window."""
+    """Flag active negative headline cycles over the lookback window.
+
+    Pure on a ticker object — production callers should use
+    ``market_data.fetch_news_velocity`` / ``call_ticker`` so retries apply.
+    Retryable Yahoo errors propagate unchanged.
+    """
     cutoff = datetime.now(timezone.utc) - timedelta(days=NEWS_LOOKBACK_DAYS)
     hits: list[str] = []
 
     try:
         news_items = ticker_obj.news or []
-    except (TypeError, AttributeError, OSError, ValueError) as exc:
+    except YAHOO_RETRYABLE:
+        raise
+    except (TypeError, AttributeError, ValueError) as exc:
         return NewsVelocityResult(
             headlines_clean=True,
             hit_count=0,

@@ -17,7 +17,9 @@ T = TypeVar("T")
 RATE_LIMIT_BACKOFFS = (5.0, 15.0, 30.0)
 
 # Rate limits plus connection/timeout style failures that often recover.
-_RETRYABLE = (YFRateLimitError, ConnectionError, TimeoutError, OSError)
+# Public so fundamentals/news fail-open paths can re-raise instead of swallowing retries.
+YAHOO_RETRYABLE = (YFRateLimitError, ConnectionError, TimeoutError, OSError)
+_RETRYABLE = YAHOO_RETRYABLE
 
 # Columns we keep when unwrapping a batch download frame.
 _PRICE_COLS = (
@@ -60,6 +62,27 @@ def call_ticker(label: str, symbol: str, fn: Callable[[yf.Ticker], T]) -> T:
     """Run ``fn(ticker)`` under the shared Yahoo retry policy."""
     ticker_obj = get_ticker(symbol)
     return with_yahoo_retries(label, lambda: fn(ticker_obj))
+
+
+def fetch_fundamentals(symbol: str):
+    """Deep-scan fundamentals via :func:`call_ticker` (production entry point)."""
+    from fundamentals import evaluate_fundamentals
+
+    return call_ticker(f"{symbol} fundamentals", symbol, evaluate_fundamentals)
+
+
+def fetch_news_velocity(symbol: str):
+    """Deep-scan headline velocity via :func:`call_ticker` (production entry point)."""
+    from sentiment import evaluate_news_velocity
+
+    return call_ticker(f"{symbol} news", symbol, evaluate_news_velocity)
+
+
+def fetch_days_to_earnings(symbol: str):
+    """Upcoming earnings horizon via :func:`call_ticker` (production entry point)."""
+    from fundamentals import days_to_next_earnings
+
+    return call_ticker(f"{symbol} earnings horizon", symbol, days_to_next_earnings)
 
 
 def _normalize_history_frame(df: pd.DataFrame) -> pd.DataFrame:

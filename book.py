@@ -12,7 +12,6 @@ from config import Config
 from db import (
     STATUS_OPEN,
     STATUS_PENDING_OPEN,
-    ActivePosition,
     close_active_position,
     confirm_pending_position,
     list_active_positions,
@@ -20,11 +19,10 @@ from db import (
     update_active_position,
 )
 from exits import ExitAction, evaluate_institutional_exit
-from fundamentals import days_to_next_earnings
 from indicators import add_technical_indicators
 from market_data import (
     RATE_LIMIT_BACKOFFS,
-    call_ticker,
+    fetch_days_to_earnings,
     safe_fetch_batch,
 )
 from sizing import stops_after_pending_fill
@@ -61,23 +59,6 @@ def _legacy_max_limit_from_history(
     return signal_price + (MAX_LIMIT_ATR_FRACTION * atr)
 
 TICKER_PAUSE_SEC = 0.8
-
-
-def _position_as_dict(pos: ActivePosition) -> dict:
-    return {
-        "ticker": pos.ticker,
-        "entry_date": pos.entry_date,
-        "entry_price": pos.entry_price,
-        "initial_stop": pos.initial_stop,
-        "current_stop": pos.current_stop,
-        "shares_total": pos.shares_total,
-        "shares_remaining": pos.shares_remaining,
-        "is_de_risked": int(pos.is_de_risked),
-        "bars_held": pos.bars_held,
-        "sector": pos.sector,
-        "status": pos.status,
-        "signal_price": pos.signal_price,
-    }
 
 
 def _abort_pending_fill(
@@ -227,14 +208,10 @@ def manage_open_positions(
             is_inverse = ticker in inverse_vehicles
             days_earn: int | None = None
             if not is_inverse:
-                days_earn = call_ticker(
-                    f"{ticker} earnings horizon",
-                    ticker,
-                    days_to_next_earnings,
-                )
+                days_earn = fetch_days_to_earnings(ticker)
                 time.sleep(TICKER_PAUSE_SEC)
             signal, updated = evaluate_institutional_exit(
-                _position_as_dict(pos),
+                pos,
                 df,
                 days_earn,
                 macro_regime_is_bull,
@@ -245,19 +222,19 @@ def manage_open_positions(
                 update_active_position(
                     conn,
                     ticker=ticker,
-                    current_stop=float(updated["current_stop"]),
-                    shares_remaining=int(updated["shares_remaining"]),
-                    is_de_risked=bool(updated["is_de_risked"]),
-                    bars_held=int(updated["bars_held"]),
+                    current_stop=updated.current_stop,
+                    shares_remaining=updated.shares_remaining,
+                    is_de_risked=updated.is_de_risked,
+                    bars_held=updated.bars_held,
                 )
                 print(
-                    f" -> [HOLD] {ticker}: stop=${updated['current_stop']:.2f} "
-                    f"bars={updated['bars_held']} "
-                    f"de_risked={bool(updated['is_de_risked'])} "
-                    f"qty={updated['shares_remaining']}"
+                    f" -> [HOLD] {ticker}: stop=${updated.current_stop:.2f} "
+                    f"bars={updated.bars_held} "
+                    f"de_risked={updated.is_de_risked} "
+                    f"qty={updated.shares_remaining}"
                 )
             elif signal.action == ExitAction.PARTIAL_SCALE:
-                remaining = int(updated["shares_remaining"])
+                remaining = updated.shares_remaining
                 if remaining <= 0:
                     # Telegram False is non-fatal — book update always proceeds.
                     send_html_message(
@@ -282,10 +259,10 @@ def manage_open_positions(
                     update_active_position(
                         conn,
                         ticker=ticker,
-                        current_stop=float(updated["current_stop"]),
+                        current_stop=updated.current_stop,
                         shares_remaining=remaining,
                         is_de_risked=True,
-                        bars_held=int(updated["bars_held"]),
+                        bars_held=updated.bars_held,
                     )
                     send_html_message(
                         cfg.telegram_bot_token,

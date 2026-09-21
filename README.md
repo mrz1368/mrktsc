@@ -87,11 +87,15 @@ mrktsc/
 
 ## Setup
 
+Requires **Python 3.11+** (matches CI / `.python-version`). If your existing
+`venv` was created on 3.9 or 3.10, recreate it on 3.11 when convenient — do not
+reuse an old venv after switching interpreters.
+
 ```bash
 git clone https://github.com/mrz1368/mrktsc.git
 cd mrktsc
 
-python3 -m venv venv
+python3.11 -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
 
 pip install -r requirements.txt

@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 import yfinance as yf
 
+from market_data import YAHOO_RETRYABLE
 from thresholds import (
     EARNINGS_BLACKOUT_AHEAD_DAYS,
     EARNINGS_BLACKOUT_POST_DAYS,
@@ -136,13 +137,14 @@ def _check_earnings_blackout(ticker_obj: yf.Ticker, notes: list[str]) -> bool:
             if -EARNINGS_BLACKOUT_POST_DAYS <= days_to_earnings <= EARNINGS_BLACKOUT_AHEAD_DAYS:
                 notes.append(f"Earnings conflict ({days_to_earnings:+d} days)")
                 return True
+    except YAHOO_RETRYABLE:
+        raise
     except (
         ValueError,
         TypeError,
         KeyError,
         IndexError,
         AttributeError,
-        OSError,
         RuntimeError,
     ):
         notes.append("Earnings calendar unverified")
@@ -150,7 +152,11 @@ def _check_earnings_blackout(ticker_obj: yf.Ticker, notes: list[str]) -> bool:
 
 
 def days_to_next_earnings(ticker_obj: yf.Ticker) -> int | None:
-    """Return whole days until the next upcoming earnings date, or None."""
+    """Return whole days until the next upcoming earnings date, or None.
+
+    Pure on a ticker object — production callers should use
+    ``market_data.fetch_days_to_earnings`` / ``call_ticker`` so retries apply.
+    """
     try:
         calendar = ticker_obj.calendar
         now = datetime.now(timezone.utc)
@@ -165,13 +171,14 @@ def days_to_next_earnings(ticker_obj: yf.Ticker) -> int | None:
         if not upcoming:
             return None
         return min(upcoming)
+    except YAHOO_RETRYABLE:
+        raise
     except (
         ValueError,
         TypeError,
         KeyError,
         IndexError,
         AttributeError,
-        OSError,
         RuntimeError,
     ):
         return None
@@ -261,7 +268,12 @@ def _eval_quality(info: dict, notes: list[str], score: float) -> tuple[bool, flo
 
 
 def evaluate_fundamentals(ticker_obj: yf.Ticker) -> FundamentalsResult:
-    """Safely evaluate fundamentals; missing Yahoo fields fail open with notes."""
+    """Safely evaluate fundamentals; missing Yahoo fields fail open with notes.
+
+    Pure on a ticker object — production callers should use
+    ``market_data.fetch_fundamentals`` / ``call_ticker`` so retries apply.
+    Retryable Yahoo errors (rate limit / transient I/O) propagate unchanged.
+    """
     notes: list[str] = []
     score = 0.0
     has_earnings_conflict = False
@@ -277,12 +289,13 @@ def evaluate_fundamentals(ticker_obj: yf.Ticker) -> FundamentalsResult:
 
         try:
             info = ticker_obj.info or {}
+        except YAHOO_RETRYABLE:
+            raise
         except (
             ValueError,
             TypeError,
             KeyError,
             AttributeError,
-            OSError,
             RuntimeError,
         ) as exc:
             print(f"Warning: {symbol or 'ticker'} info fetch failed: {exc}")
@@ -316,12 +329,13 @@ def evaluate_fundamentals(ticker_obj: yf.Ticker) -> FundamentalsResult:
             if symbol in TSX_BLUECHIP_FALLBACK:
                 notes.append(f"TSX blue-chip technical fallback ({symbol})")
 
+    except YAHOO_RETRYABLE:
+        raise
     except (
         ValueError,
         TypeError,
         KeyError,
         IndexError,
-        OSError,
         AttributeError,
         RuntimeError,
     ) as exc:

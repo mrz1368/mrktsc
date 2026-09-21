@@ -10,11 +10,12 @@ Implements:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 
 import pandas as pd
 
+from db import ActivePosition
 from sizing import TARGET_1_R, tranche_one_shares
 
 
@@ -40,26 +41,26 @@ class ExitSignal:
 
 
 def evaluate_institutional_exit(
-    position: dict,
+    position: ActivePosition,
     df_daily: pd.DataFrame,
     days_to_earnings: int | None,
     macro_regime_is_bull: bool,
     *,
     is_inverse_vehicle: bool = False,
     max_holding_bars: int = 15,
-) -> tuple[ExitSignal, dict]:
+) -> tuple[ExitSignal, ActivePosition]:
     """Evaluate an active position using an institutional tranche lifecycle."""
-    ticker = str(position["ticker"])
-    entry_price = float(position["entry_price"])
-    shares_held = int(position["shares_remaining"])
-    is_de_risked = bool(position["is_de_risked"])
-    initial_stop = float(position["initial_stop"])
-    current_stop = float(position["current_stop"])
+    ticker = position.ticker
+    entry_price = float(position.entry_price)
+    shares_held = int(position.shares_remaining)
+    is_de_risked = bool(position.is_de_risked)
+    initial_stop = float(position.initial_stop)
+    current_stop = float(position.current_stop)
 
     current_close = float(df_daily["Close"].iloc[-1])
     ema20 = float(df_daily["Close"].ewm(span=20, adjust=False).mean().iloc[-1])
     sma50 = float(df_daily["Close"].rolling(50).mean().iloc[-1])
-    bars_held = int(position["bars_held"]) + 1
+    bars_held = int(position.bars_held) + 1
 
     # Neutralize ex-dividend accounting drops so cash dividends don't trip stops.
     dividend_paid = (
@@ -71,10 +72,12 @@ def evaluate_institutional_exit(
         current_stop = max(0.0, current_stop - dividend_paid)
         initial_stop = max(0.0, initial_stop - dividend_paid)
 
-    updated_pos = dict(position)
-    updated_pos["bars_held"] = bars_held
-    updated_pos["current_stop"] = current_stop
-    updated_pos["initial_stop"] = initial_stop
+    updated = replace(
+        position,
+        bars_held=bars_held,
+        current_stop=current_stop,
+        initial_stop=initial_stop,
+    )
 
     def _signal(
         action: ExitAction,
@@ -83,7 +86,8 @@ def evaluate_institutional_exit(
         reason: str,
         *,
         exit_price: float | None = None,
-    ) -> tuple[ExitSignal, dict]:
+        pos: ActivePosition | None = None,
+    ) -> tuple[ExitSignal, ActivePosition]:
         price = current_close if exit_price is None else exit_price
         return (
             ExitSignal(
@@ -95,7 +99,7 @@ def evaluate_institutional_exit(
                 exit_price=price,
                 mark_price=current_close,
             ),
-            updated_pos,
+            pos if pos is not None else updated,
         )
 
     # 1. Event risk override: pre-earnings purge (equities only)
@@ -141,7 +145,7 @@ def evaluate_institutional_exit(
     target_1_5r = entry_price + (TARGET_1_R * r_distance)
 
     if not is_de_risked and r_distance > 0 and current_close >= target_1_5r:
-        shares_total = int(position.get("shares_total", shares_held))
+        shares_total = int(position.shares_total)
         t1_shares = tranche_one_shares(shares_total)
         # Never liquidate the full book on tranche 1 when a runner can remain.
         if t1_shares >= shares_held and shares_held > 1:
@@ -149,9 +153,12 @@ def evaluate_institutional_exit(
         t1_shares = min(t1_shares, shares_held)
         new_stop = max(current_stop, entry_price * 1.002)
         remaining = shares_held - t1_shares
-        updated_pos["is_de_risked"] = 1
-        updated_pos["shares_remaining"] = remaining
-        updated_pos["current_stop"] = new_stop
+        scaled = replace(
+            updated,
+            is_de_risked=True,
+            shares_remaining=remaining,
+            current_stop=new_stop,
+        )
         return _signal(
             ExitAction.PARTIAL_SCALE,
             t1_shares,
@@ -161,12 +168,13 @@ def evaluate_institutional_exit(
                 f"Scaled 1/3 ({t1_shares} sh), ratcheted stop to BE."
             ),
             exit_price=current_close,
+            pos=scaled,
         )
 
     # 5. Tranche 2: core runner trail (post de-risking) along rising 20 EMA
     if is_de_risked:
         if ema20 > current_stop:
-            updated_pos["current_stop"] = ema20
+            updated = replace(updated, current_stop=ema20)
             current_stop = ema20
 
         if current_close < sma50:
@@ -194,6 +202,6 @@ def evaluate_institutional_exit(
     return _signal(
         ExitAction.HOLD,
         0,
-        float(updated_pos.get("current_stop", current_stop)),
+        float(updated.current_stop),
         "Trend intact. Hold.",
     )

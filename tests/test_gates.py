@@ -135,6 +135,18 @@ def test_illiquid_blocks_every_sleeve() -> None:
     assert screen.needs_deep_scan is False
 
 
+def _fund_ok_kwargs(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = dict(
+        earnings_conflict=False,
+        debt_safe=True,
+        fcf_positive=True,
+        quality_ok=True,
+        headlines_clean=True,
+    )
+    base.update(overrides)
+    return base
+
+
 def test_arm_setup_category_and_earnings_gate() -> None:
     tech = screen_technical(
         market_regime="BULL",
@@ -148,30 +160,17 @@ def test_arm_setup_category_and_earnings_gate() -> None:
         illiquid=False,
         is_extreme_greed=False,
     )
-    armed = arm_setup(
-        tech,
-        passes_fundamentals=True,
-        headlines_clean=True,
-        earnings_conflict=False,
-    )
+    armed = arm_setup(tech, **_fund_ok_kwargs())  # type: ignore[arg-type]
     assert armed.is_valid_buy is True
     assert armed.category == "setup"
 
-    blocked = arm_setup(
-        tech,
-        passes_fundamentals=True,
-        headlines_clean=True,
-        earnings_conflict=True,
-    )
+    blocked = arm_setup(tech, **_fund_ok_kwargs(earnings_conflict=True))  # type: ignore[arg-type]
     assert blocked.is_valid_buy is False
     assert blocked.category == "neutral"
 
     greed = arm_setup(
         tech,
-        passes_fundamentals=True,
-        headlines_clean=True,
-        earnings_conflict=False,
-        is_extreme_greed=True,
+        **_fund_ok_kwargs(is_extreme_greed=True),  # type: ignore[arg-type]
     )
     assert greed.is_valid_buy is False
     assert greed.blocked_extreme_greed is True
@@ -185,9 +184,10 @@ def test_arm_setup_category_and_earnings_gate() -> None:
     )
     neutral = arm_setup(
         quiet,
-        passes_fundamentals=False,
-        headlines_clean=False,
-        earnings_conflict=False,
+        **_fund_ok_kwargs(
+            debt_safe=False,
+            headlines_clean=False,
+        ),  # type: ignore[arg-type]
     )
     assert neutral.category == "neutral"
 
@@ -207,11 +207,43 @@ def test_arm_setup_extreme_greed_does_not_block_inverse() -> None:
     )
     armed = arm_setup(
         tech,
-        passes_fundamentals=True,
-        headlines_clean=True,
-        earnings_conflict=False,
-        is_extreme_greed=True,
+        **_fund_ok_kwargs(is_extreme_greed=True),  # type: ignore[arg-type]
     )
     assert armed.is_valid_inverse is True
     assert armed.category == "setup"
     assert armed.blocked_extreme_greed is False
+
+
+def test_fund_news_reject_reason_shared() -> None:
+    from gates import fund_news_reject_reason
+
+    assert (
+        fund_news_reject_reason(
+            earnings_conflict=False,
+            debt_safe=True,
+            fcf_positive=True,
+            quality_ok=True,
+            headlines_clean=True,
+        )
+        is None
+    )
+    assert "blackout" in (
+        fund_news_reject_reason(
+            earnings_conflict=True,
+            debt_safe=True,
+            fcf_positive=True,
+            quality_ok=True,
+            headlines_clean=True,
+        )
+        or ""
+    ).lower()
+    greed = fund_news_reject_reason(
+        earnings_conflict=False,
+        debt_safe=True,
+        fcf_positive=True,
+        quality_ok=True,
+        headlines_clean=True,
+        is_extreme_greed=True,
+        extreme_greed_score=80.0,
+    )
+    assert greed is not None and "Extreme Greed" in greed and "80" in greed

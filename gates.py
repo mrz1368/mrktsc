@@ -5,7 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from indicators import SetupFlags
-from thresholds import WATCH_MAX_DIST_TO_200_PCT
+from thresholds import (
+    EARNINGS_BLACKOUT_AHEAD_DAYS,
+    EARNINGS_BLACKOUT_POST_DAYS,
+    WATCH_MAX_DIST_TO_200_PCT,
+)
 
 
 @dataclass(frozen=True)
@@ -116,12 +120,52 @@ class ArmedSetup:
         return "neutral"
 
 
+def fund_news_reject_reason(
+    *,
+    earnings_conflict: bool,
+    debt_safe: bool,
+    fcf_positive: bool,
+    quality_ok: bool,
+    headlines_clean: bool,
+    is_extreme_greed: bool = False,
+    extreme_greed_score: float | None = None,
+    news_notes: str | None = None,
+) -> str | None:
+    """Shared fund / news / earnings / greed veto reasons (SSOT for arm + dispatch).
+
+    Extreme greed is optional: pass ``is_extreme_greed=True`` for long-buy
+    rejects; leave False when arming inverses / computing fund_ok.
+    """
+    if earnings_conflict:
+        return (
+            f"Earnings inside -{EARNINGS_BLACKOUT_POST_DAYS}/"
+            f"+{EARNINGS_BLACKOUT_AHEAD_DAYS} day blackout."
+        )
+    if not debt_safe:
+        return "Failed debt-service coverage floor (<2x)."
+    if not fcf_positive:
+        return "Failed positive free-cash-flow / OCF check."
+    if not quality_ok:
+        return "Failed operating-margin quality floor."
+    if not headlines_clean:
+        if news_notes:
+            return f"Negative news velocity: {news_notes}"
+        return "Negative news velocity."
+    if is_extreme_greed:
+        if extreme_greed_score is not None:
+            return f"Extreme Greed regime ({extreme_greed_score:.0f}/100)."
+        return "Extreme Greed regime."
+    return None
+
+
 def arm_setup(
     tech: TechScreen,
     *,
-    passes_fundamentals: bool,
-    headlines_clean: bool,
     earnings_conflict: bool,
+    debt_safe: bool,
+    fcf_positive: bool,
+    quality_ok: bool,
+    headlines_clean: bool,
     is_extreme_greed: bool = False,
 ) -> ArmedSetup:
     """Final confirmation with fundamental / news / regime gates.
@@ -129,12 +173,22 @@ def arm_setup(
     Extreme greed blocks long buys (dashboard + dispatch stay aligned) but does
     not block bear-regime inverses. Watch is already gated in ``is_tech_watch``.
     """
-    fund_ok = passes_fundamentals and headlines_clean and not earnings_conflict
+    fund_ok = (
+        fund_news_reject_reason(
+            earnings_conflict=earnings_conflict,
+            debt_safe=debt_safe,
+            fcf_positive=fcf_positive,
+            quality_ok=quality_ok,
+            headlines_clean=headlines_clean,
+            is_extreme_greed=False,
+        )
+        is None
+    )
     would_buy = tech.is_tech_buy and fund_ok
     blocked_extreme_greed = would_buy and is_extreme_greed
     return ArmedSetup(
         is_valid_buy=would_buy and not is_extreme_greed,
         is_valid_inverse=tech.is_tech_inverse and fund_ok,
-        is_watch=(tech.is_tech_watch and passes_fundamentals and headlines_clean),
+        is_watch=tech.is_tech_watch and fund_ok,
         blocked_extreme_greed=blocked_extreme_greed,
     )

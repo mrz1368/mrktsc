@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from fundamentals import (
     FundamentalsResult,
     _eval_cash_flow,
@@ -103,3 +105,13 @@ def test_hard_fail_still_blocks() -> None:
     )
     assert result.fcf_positive is False
     assert result.passes_fundamentals is False
+
+
+def test_retryable_yahoo_error_propagates() -> None:
+    """Rate limits / transient I/O must escape fail-open so call_ticker can retry."""
+    from yfinance.exceptions import YFRateLimitError
+
+    with pytest.raises(YFRateLimitError):
+        evaluate_fundamentals(
+            FakeTicker(info_raises=YFRateLimitError())  # type: ignore[arg-type]
+        )

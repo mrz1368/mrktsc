@@ -13,6 +13,7 @@ from db import (
     record_if_allowed,
 )
 from fundamentals import FundamentalsResult
+from gates import fund_news_reject_reason
 from indicators import BarSnapshot, SetupFlags
 from regime import load_inverse_quote
 from sentiment import MacroSentiment, NewsVelocityResult
@@ -31,8 +32,6 @@ from telegram_notify import (
 )
 from thresholds import (
     ATR_STOP_MULT,
-    EARNINGS_BLACKOUT_AHEAD_DAYS,
-    EARNINGS_BLACKOUT_POST_DAYS,
     MAX_LIMIT_ATR_FRACTION,
     MAX_OPEN_PER_SECTOR,
     WATCH_INVALIDATION_BUFFER,
@@ -94,22 +93,17 @@ def _reject_fund_or_news(
     news: NewsVelocityResult,
     macro: MacroSentiment,
 ) -> str | None:
-    if fund.earnings_conflict:
-        return (
-            f"Earnings inside -{EARNINGS_BLACKOUT_POST_DAYS}/"
-            f"+{EARNINGS_BLACKOUT_AHEAD_DAYS} day blackout."
-        )
-    if not fund.debt_safe:
-        return "Failed debt-service coverage floor (<2x)."
-    if not fund.fcf_positive:
-        return "Failed positive free-cash-flow / OCF check."
-    if not fund.quality_ok:
-        return "Failed operating-margin quality floor."
-    if not news.headlines_clean:
-        return f"Negative news velocity: {news.notes}"
-    if macro.is_extreme_greed:
-        return f"Extreme Greed regime ({macro.score:.0f}/100)."
-    return None
+    _ = ticker
+    return fund_news_reject_reason(
+        earnings_conflict=fund.earnings_conflict,
+        debt_safe=fund.debt_safe,
+        fcf_positive=fund.fcf_positive,
+        quality_ok=fund.quality_ok,
+        headlines_clean=news.headlines_clean,
+        is_extreme_greed=macro.is_extreme_greed,
+        extreme_greed_score=macro.score,
+        news_notes=news.notes,
+    )
 
 
 def try_dispatch_buy(

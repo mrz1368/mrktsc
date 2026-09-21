@@ -6,23 +6,29 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from db import STATUS_OPEN, ActivePosition
 from exits import ExitAction, evaluate_institutional_exit
 from sizing import TARGET_1_R, tranche_one_shares
 
 
-def _base_position(**overrides: object) -> dict:
-    pos = {
+def _base_position(**overrides: object) -> ActivePosition:
+    fields: dict[str, object] = {
         "ticker": "SHOP.TO",
+        "entry_date": "2024-01-02T00:00:00+0000",
         "entry_price": 100.0,
-        "shares_total": 9,
-        "shares_remaining": 9,
-        "is_de_risked": 0,
         "initial_stop": 97.0,
         "current_stop": 97.0,
+        "shares_total": 9,
+        "shares_remaining": 9,
+        "is_de_risked": False,
         "bars_held": 2,
+        "sector": "Technology",
+        "status": STATUS_OPEN,
+        "signal_price": 100.0,
+        "max_limit_price": 100.3,
     }
-    pos.update(overrides)
-    return pos
+    fields.update(overrides)
+    return ActivePosition(**fields)  # type: ignore[arg-type]
 
 
 def _df_from_closes(
@@ -84,7 +90,7 @@ def test_scale_out_one_third_and_breakeven_stop() -> None:
         current_stop=initial_stop,
         shares_total=shares_total,
         shares_remaining=shares_total,
-        is_de_risked=0,
+        is_de_risked=False,
     )
     closes = [100.0] * 55 + [target]
     signal, updated = evaluate_institutional_exit(
@@ -94,9 +100,9 @@ def test_scale_out_one_third_and_breakeven_stop() -> None:
     assert expected_t1 == 3  # not 50% (would be 5)
     assert signal.action == ExitAction.PARTIAL_SCALE
     assert signal.shares_to_sell == expected_t1
-    assert updated["is_de_risked"] == 1
-    assert updated["shares_remaining"] == shares_total - expected_t1
-    assert updated["current_stop"] == pytest.approx(entry * 1.002)
+    assert updated.is_de_risked is True
+    assert updated.shares_remaining == shares_total - expected_t1
+    assert updated.current_stop == pytest.approx(entry * 1.002)
 
 
 def test_scale_out_not_fifty_percent() -> None:
@@ -124,7 +130,7 @@ def test_trail_exit_below_50_sma() -> None:
     base = list(np.linspace(90.0, 110.0, 55))
     closes = base + [100.0]
     pos = _base_position(
-        is_de_risked=1,
+        is_de_risked=True,
         shares_remaining=6,
         shares_total=9,
         current_stop=90.0,
@@ -134,7 +140,7 @@ def test_trail_exit_below_50_sma() -> None:
     df = _df_from_closes(closes)
     sma50 = float(df["Close"].rolling(50).mean().iloc[-1])
     assert df["Close"].iloc[-1] < sma50
-    assert df["Close"].iloc[-1] > pos["current_stop"]
+    assert df["Close"].iloc[-1] > pos.current_stop
     signal, _ = evaluate_institutional_exit(
         pos, df, days_to_earnings=None, macro_regime_is_bull=True
     )
@@ -185,5 +191,5 @@ def test_dividend_adjusts_stop_without_false_trigger() -> None:
         pos, df, days_to_earnings=None, macro_regime_is_bull=True
     )
     assert signal.action != ExitAction.FULL_EXIT_STOP
-    assert updated["current_stop"] == pytest.approx(96.0)
-    assert updated["initial_stop"] == pytest.approx(96.0)
+    assert updated.current_stop == pytest.approx(96.0)
+    assert updated.initial_stop == pytest.approx(96.0)
