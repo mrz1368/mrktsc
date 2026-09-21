@@ -1,7 +1,7 @@
 """Institutional multi-tranche exit evaluator (corrected).
 
 Implements:
-- Staged scaling (50% harvest at 1.5R, trail remainder)
+- Staged scaling (⅓ harvest at 1.5R via sizing.tranche_one_shares, trail remainder)
 - Stop-to-breakeven ratchet
 - Trend continuation trailing stop (20 EMA floor)
 - Event risk liquidation (pre-earnings T-2, equities only)
@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from enum import Enum
 
 import pandas as pd
+
+from sizing import TARGET_1_R, tranche_one_shares
 
 
 class ExitAction(str, Enum):
@@ -134,24 +136,30 @@ def evaluate_institutional_exit(
             f"Close (${current_close:.2f}) breached stop level (${current_stop:.2f}).",
         )
 
-    # 4. Tranche 1: de-risking harvest at 1.5R target
+    # 4. Tranche 1: de-risking harvest at 1.5R (same ⅓ fraction as sizing / Telegram)
     r_distance = entry_price - initial_stop
-    target_1_5r = entry_price + (1.5 * r_distance)
+    target_1_5r = entry_price + (TARGET_1_R * r_distance)
 
     if not is_de_risked and r_distance > 0 and current_close >= target_1_5r:
-        half_shares = max(1, shares_held // 2)
-        if half_shares >= shares_held:
-            half_shares = max(1, shares_held - 1) if shares_held > 1 else shares_held
+        shares_total = int(position.get("shares_total", shares_held))
+        t1_shares = tranche_one_shares(shares_total)
+        # Never liquidate the full book on tranche 1 when a runner can remain.
+        if t1_shares >= shares_held and shares_held > 1:
+            t1_shares = shares_held - 1
+        t1_shares = min(t1_shares, shares_held)
         new_stop = max(current_stop, entry_price * 1.002)
-        remaining = shares_held - half_shares
+        remaining = shares_held - t1_shares
         updated_pos["is_de_risked"] = 1
         updated_pos["shares_remaining"] = remaining
         updated_pos["current_stop"] = new_stop
         return _signal(
             ExitAction.PARTIAL_SCALE,
-            half_shares,
+            t1_shares,
             new_stop,
-            f"Hit 1.5R target (${target_1_5r:.2f}). Scaled 50%, ratcheted stop to BE.",
+            (
+                f"Hit 1.5R target (${target_1_5r:.2f}). "
+                f"Scaled 1/3 ({t1_shares} sh), ratcheted stop to BE."
+            ),
             exit_price=current_close,
         )
 
