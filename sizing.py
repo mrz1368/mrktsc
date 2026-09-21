@@ -9,10 +9,12 @@ from typing import Protocol
 
 from thresholds import (
     ATR_STOP_MULT,
+    BASE_SLIPPAGE_BPS,
     MAX_LIMIT_ATR_FRACTION,
     MAX_PORTFOLIO_HEAT_R,
     MIN_SHARES_FOR_SCALE_OUT,
     SCALE_OUT_FRACTION,
+    SLIPPAGE_NORM_ADDV,
     TARGET_1_R,
 )
 
@@ -87,6 +89,30 @@ def evaluate_heat_veto(
     return HeatVeto(open_r=open_r, veto=veto, log_line=log_line)
 
 
+def estimate_tau_i(addv: float, hist_vol: float) -> float:
+    """Linear transaction-cost drag fraction (τᵢ) from vol / liquidity.
+
+    ``τᵢ = BASE_SLIPPAGE_BPS × (hist_vol / max(addv, 1)) × SLIPPAGE_NORM_ADDV``.
+    """
+    vol = max(0.0, float(hist_vol))
+    liquidity = max(float(addv), 1.0)
+    return BASE_SLIPPAGE_BPS * (vol / liquidity) * SLIPPAGE_NORM_ADDV
+
+
+def slippage_destroys_edge(
+    entry: float,
+    r: float,
+    addv: float,
+    hist_vol: float,
+) -> bool:
+    """True when per-share impact cost wipes out the 1.5R expected profit."""
+    if entry <= 0 or r <= 0:
+        return True
+    impact_cost_cad = entry * estimate_tau_i(addv, hist_vol)
+    expected_profit_per_share = TARGET_1_R * r
+    return expected_profit_per_share - impact_cost_cad <= 0
+
+
 def size_inverse_from_underlying(
     *,
     underlying_close: float,
@@ -94,14 +120,26 @@ def size_inverse_from_underlying(
     inverse_close: float,
     leverage_factor: float,
     risk_cad: float,
+    addv: float,
+    hist_vol: float,
 ) -> PositionSize | None:
-    """Translate underlying ATR risk onto the inverse, scaled by |leverage|."""
+    """Translate underlying ATR risk onto the inverse, scaled by |leverage|.
+
+    ``addv`` / ``hist_vol`` should be the vehicle being sized when available;
+    callers without an inverse bar may pass the underlying's liquidity stats.
+    """
     if underlying_close <= 0 or underlying_atr <= 0:
         return None
     underlying_stop_pct = (ATR_STOP_MULT * underlying_atr) / underlying_close
     inv_stop_pct = underlying_stop_pct * leverage_factor
     inv_atr = (inverse_close * inv_stop_pct) / ATR_STOP_MULT
-    return size_position(inverse_close, inv_atr, risk_cad)
+    return size_position(
+        inverse_close,
+        inv_atr,
+        risk_cad,
+        addv=addv,
+        hist_vol=hist_vol,
+    )
 
 
 @dataclass(frozen=True)
@@ -118,12 +156,22 @@ class PositionSize:
     max_limit_price: float
 
 
-def size_position(entry: float, atr: float, risk_cad: float) -> PositionSize | None:
+def size_position(
+    entry: float,
+    atr: float,
+    risk_cad: float,
+    *,
+    addv: float,
+    hist_vol: float,
+) -> PositionSize | None:
     if entry <= 0 or atr <= 0 or risk_cad <= 0:
         return None
 
     r = ATR_STOP_MULT * atr
     if r <= 0:
+        return None
+
+    if slippage_destroys_edge(entry, r, addv, hist_vol):
         return None
 
     shares = math.floor(risk_cad / r)

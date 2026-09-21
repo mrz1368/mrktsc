@@ -2,7 +2,18 @@
 
 from __future__ import annotations
 
-from indicators import BarSnapshot, evaluate_setup_flags
+import math
+
+import numpy as np
+import pytest
+
+from indicators import (
+    BarSnapshot,
+    add_technical_indicators,
+    evaluate_setup_flags,
+    snapshot_from_bar,
+)
+from thresholds import ADDV_LOOKBACK
 
 
 def _bar(**overrides: float) -> BarSnapshot:
@@ -22,9 +33,47 @@ def _bar(**overrides: float) -> BarSnapshot:
         stock_roc=0.10,
         sma_50_slope=0.5,
         adx=30.0,
+        addv=100_000_000.0,
+        hist_vol=0.01,
     )
     base.update(overrides)
     return BarSnapshot(**base)  # type: ignore[arg-type]
+
+
+def test_addv_and_hist_vol_columns(make_ohlcv) -> None:
+    # Constant close/volume → ADDV = close * volume; HIST_VOL ≈ 0 after warmup.
+    closes = [100.0] * 40
+    df = add_technical_indicators(make_ohlcv(closes, volume=1_000_000.0))
+    assert "ADDV" in df.columns and "HIST_VOL" in df.columns
+    last = df.iloc[-1]
+    assert last["ADDV"] == pytest.approx(100.0 * 1_000_000.0)
+    assert last["HIST_VOL"] == pytest.approx(0.0)
+
+    # Alternating closes → positive hist vol; ADDV uses lookback window.
+    zig = [100.0 + (i % 2) for i in range(40)]
+    zig_df = add_technical_indicators(make_ohlcv(zig, volume=500_000.0))
+    assert zig_df.iloc[-1]["HIST_VOL"] > 0
+    # Rolling mean of Close*Volume over ADDV_LOOKBACK
+    dollar = zig_df["Close"] * zig_df["Volume"]
+    expect_addv = dollar.iloc[-ADDV_LOOKBACK:].mean()
+    assert zig_df.iloc[-1]["ADDV"] == pytest.approx(expect_addv)
+
+
+def test_snapshot_maps_addv_hist_vol_safely(make_ohlcv) -> None:
+    closes = list(np.linspace(90.0, 110.0, 250))
+    df = add_technical_indicators(make_ohlcv(closes, volume=2_000_000.0))
+    bar = snapshot_from_bar(df.iloc[-1])
+    assert bar.addv > 0
+    assert bar.hist_vol >= 0
+    assert math.isfinite(bar.addv) and math.isfinite(bar.hist_vol)
+
+    # Warmup row: ADDV/HIST_VOL NaN → 0.0
+    early = df.iloc[0].copy()
+    early["ADDV"] = float("nan")
+    early["HIST_VOL"] = float("nan")
+    warm = snapshot_from_bar(early)
+    assert warm.addv == 0.0
+    assert warm.hist_vol == 0.0
 
 
 def test_pullback_requires_close_at_or_above_50_sma() -> None:

@@ -16,7 +16,12 @@ from fundamentals import FundamentalsResult
 from indicators import BarSnapshot, SetupFlags
 from regime import load_inverse_quote
 from sentiment import MacroSentiment, NewsVelocityResult
-from sizing import PositionSize, size_inverse_from_underlying, size_position
+from sizing import (
+    PositionSize,
+    size_inverse_from_underlying,
+    size_position,
+    slippage_destroys_edge,
+)
 from telegram_notify import (
     AlertContext,
     format_inverse_html,
@@ -25,6 +30,7 @@ from telegram_notify import (
     send_html_message,
 )
 from thresholds import (
+    ATR_STOP_MULT,
     EARNINGS_BLACKOUT_AHEAD_DAYS,
     EARNINGS_BLACKOUT_POST_DAYS,
     MAX_LIMIT_ATR_FRACTION,
@@ -129,8 +135,19 @@ def try_dispatch_buy(
         print(f" -> [SKIPPED] {ticker}: Sector {sector} limit ({MAX_OPEN_PER_SECTOR}) reached.")
         return False
 
-    size = size_position(bar.close, bar.atr, dynamic_risk_cad)
+    size = size_position(
+        bar.close,
+        bar.atr,
+        dynamic_risk_cad,
+        addv=bar.addv,
+        hist_vol=bar.hist_vol,
+    )
     if size is None:
+        r = ATR_STOP_MULT * bar.atr
+        if slippage_destroys_edge(bar.close, r, bar.addv, bar.hist_vol):
+            print(
+                f" -> [REJECTED] {ticker}: Expected slippage/friction exceeds target edge."
+            )
         return False
 
     result = record_if_allowed(conn, ticker, size, cfg.cooldown_days, alert_type=ALERT_BUY)
@@ -197,14 +214,28 @@ def try_dispatch_inverse(
     if inv_close is None:
         print(f" -> [SKIPPED] {inverse_ticker}: could not load inverse quote.")
         return False
+    # Prefer inverse-vehicle ADDV/hist_vol when available; fall back to underlying.
     size = size_inverse_from_underlying(
         underlying_close=bar.close,
         underlying_atr=bar.atr,
         inverse_close=inv_close,
         leverage_factor=inverse_leverage(inverse_ticker),
         risk_cad=dynamic_risk_cad,
+        addv=bar.addv,
+        hist_vol=bar.hist_vol,
     )
     if size is None:
+        if bar.close > 0:
+            inv_stop_pct = ((ATR_STOP_MULT * bar.atr) / bar.close) * inverse_leverage(
+                inverse_ticker
+            )
+            inv_atr = (inv_close * inv_stop_pct) / ATR_STOP_MULT
+            inv_r = ATR_STOP_MULT * inv_atr
+            if slippage_destroys_edge(inv_close, inv_r, bar.addv, bar.hist_vol):
+                print(
+                    f" -> [REJECTED] {inverse_ticker}: "
+                    "Expected slippage/friction exceeds target edge."
+                )
         return False
 
     result = record_if_allowed(

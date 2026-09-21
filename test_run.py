@@ -40,7 +40,13 @@ def main() -> int:
     expected_shares = math.floor(cfg.portfolio_risk_cad / EXPECTED_R)
     _assert(expected_shares >= 3, "PORTFOLIO_RISK_CAD is too small to size a 1/3 scale-out")
 
-    size = size_position(ENTRY, ATR, cfg.portfolio_risk_cad)
+    size = size_position(
+        ENTRY,
+        ATR,
+        cfg.portfolio_risk_cad,
+        addv=100_000_000.0,
+        hist_vol=0.01,
+    )
     _assert(size is not None, "sizing returned None")
     expected_t1 = math.ceil(expected_shares / 3.0)
     expected_runner = expected_shares - expected_t1

@@ -59,6 +59,8 @@ def test_dashboard_card_template_keys_and_signed_distance(make_ohlcv) -> None:
         stock_roc=0.1,
         sma_50_slope=0.4,
         adx=28.0,
+        addv=100_000_000.0,
+        hist_vol=0.01,
     )
     flags = SetupFlags(
         is_macro_bullish=True,

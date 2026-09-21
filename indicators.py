@@ -6,12 +6,14 @@ normalized MA slopes, and Close Location Value (CLV) candle confirmation.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 
 from thresholds import (
+    ADDV_LOOKBACK,
     MAX_CLV_BEAR,
     MAX_PENETRATION_ATR,
     MIN_ADX,
@@ -90,7 +92,22 @@ def add_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     data["VOL_SMA_20"] = data["Volume"].shift(1).rolling(window=20).mean()
     data["ROC_63"] = (data["Close"] - data["Close"].shift(63)) / data["Close"].shift(63)
 
+    # Average daily dollar volume and historical vol for ex-ante slippage veto.
+    data["ADDV"] = (data["Close"] * data["Volume"]).rolling(window=ADDV_LOOKBACK).mean()
+    data["HIST_VOL"] = data["Close"].pct_change().rolling(window=ADDV_LOOKBACK).std()
+
     return data
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    """Coerce bar fields to float; NaN/inf → default (no div-by-zero downstream)."""
+    try:
+        out = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    if math.isnan(out) or math.isinf(out):
+        return default
+    return out
 
 
 @dataclass(frozen=True)
@@ -110,6 +127,8 @@ class BarSnapshot:
     stock_roc: float
     sma_50_slope: float
     adx: float
+    addv: float
+    hist_vol: float
 
 
 @dataclass(frozen=True)
@@ -139,21 +158,23 @@ class SetupFlags:
 
 def snapshot_from_bar(row: pd.Series) -> BarSnapshot:
     return BarSnapshot(
-        close=float(row["Close"]),
-        open=float(row["Open"]),
-        high=float(row["High"]),
-        low=float(row["Low"]),
-        volume=float(row["Volume"]),
-        sma_50=float(row["SMA_50"]),
-        sma_150=float(row["SMA_150"]),
-        sma_200=float(row["SMA_200"]),
-        ema_20=float(row["EMA_20"]),
-        rsi=float(row["RSI_14"]),
-        atr=float(row["ATR_14"]),
-        vol_sma=float(row["VOL_SMA_20"]),
-        stock_roc=float(row["ROC_63"]),
-        sma_50_slope=float(row["SMA_50_SLOPE"]),
-        adx=float(row["ADX_14"]),
+        close=_safe_float(row["Close"]),
+        open=_safe_float(row["Open"]),
+        high=_safe_float(row["High"]),
+        low=_safe_float(row["Low"]),
+        volume=_safe_float(row["Volume"]),
+        sma_50=_safe_float(row["SMA_50"]),
+        sma_150=_safe_float(row["SMA_150"]),
+        sma_200=_safe_float(row["SMA_200"]),
+        ema_20=_safe_float(row["EMA_20"]),
+        rsi=_safe_float(row["RSI_14"]),
+        atr=_safe_float(row["ATR_14"]),
+        vol_sma=_safe_float(row["VOL_SMA_20"]),
+        stock_roc=_safe_float(row["ROC_63"]),
+        sma_50_slope=_safe_float(row["SMA_50_SLOPE"]),
+        adx=_safe_float(row["ADX_14"]),
+        addv=_safe_float(row["ADDV"]),
+        hist_vol=_safe_float(row["HIST_VOL"]),
     )
 
 

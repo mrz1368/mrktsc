@@ -20,6 +20,7 @@ def test_indicator_constants_are_thresholds_aliases() -> None:
     assert indicators.PULLBACK_MAX_PCT is thresholds.PULLBACK_MAX_PCT
     assert indicators.MIN_CLV_BULL is thresholds.MIN_CLV_BULL
     assert indicators.MAX_CLV_BEAR is thresholds.MAX_CLV_BEAR
+    assert indicators.ADDV_LOOKBACK is thresholds.ADDV_LOOKBACK
 
 
 def test_sizing_constants_are_thresholds_aliases() -> None:
@@ -29,6 +30,14 @@ def test_sizing_constants_are_thresholds_aliases() -> None:
     assert sizing.MAX_PORTFOLIO_HEAT_R is thresholds.MAX_PORTFOLIO_HEAT_R
     assert sizing.MAX_LIMIT_ATR_FRACTION is thresholds.MAX_LIMIT_ATR_FRACTION
     assert sizing.MIN_SHARES_FOR_SCALE_OUT is thresholds.MIN_SHARES_FOR_SCALE_OUT
+    assert sizing.BASE_SLIPPAGE_BPS is thresholds.BASE_SLIPPAGE_BPS
+    assert sizing.SLIPPAGE_NORM_ADDV is thresholds.SLIPPAGE_NORM_ADDV
+
+
+def test_slippage_threshold_defaults() -> None:
+    assert thresholds.ADDV_LOOKBACK == 21
+    assert thresholds.BASE_SLIPPAGE_BPS == pytest.approx(0.001)
+    assert thresholds.SLIPPAGE_NORM_ADDV == pytest.approx(10_000_000_000.0)
 
 
 def test_universe_constants_are_thresholds_aliases() -> None:

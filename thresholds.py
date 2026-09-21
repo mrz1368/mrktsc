@@ -15,6 +15,14 @@ SMA_SLOPE_LOOKBACK = 5
 PULLBACK_MAX_PCT = 2.5
 MIN_CLV_BULL = 0.60
 MAX_CLV_BEAR = 0.40
+ADDV_LOOKBACK = 21  # ~1 calendar month of trading sessions
+
+# --- Ex-ante transaction cost (slippage) veto -------------------------------
+# BASE_SLIPPAGE_BPS is a fraction of price (0.001 = 10 bps), despite the name.
+BASE_SLIPPAGE_BPS = 0.001
+# Scales tau so ~$100M ADDV at 1% daily hist_vol ≈ BASE (0.1%) cost; thinner names spike.
+SLIPPAGE_NORM_ADDV = 10_000_000_000.0
+
 
 # --- Technical gates --------------------------------------------------------
 WATCH_MAX_DIST_TO_200_PCT = 3.0
