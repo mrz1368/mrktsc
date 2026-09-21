@@ -7,10 +7,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import pandas as pd
-import yfinance as yf
+from yfinance.exceptions import YFRateLimitError
 
 from indicators import add_technical_indicators
-from universe import BENCHMARK_TICKER
+from market_data import fetch_benchmark_history, fetch_inverse_history, fetch_vix_history
 
 
 @dataclass(frozen=True)
@@ -74,10 +74,13 @@ def regime_from_benchmark_frame(bench_df: pd.DataFrame) -> BenchmarkState:
     )
 
 
+_SOFT_FAIL = (ValueError, TypeError, KeyError, IndexError, OSError, YFRateLimitError)
+
+
 def get_vix_multiplier() -> tuple[float, float]:
     """Fetch VIX to scale risk up or down based on macro volatility."""
     try:
-        hist = yf.Ticker("^VIX").history(period="5d")
+        hist = fetch_vix_history(period="5d")
         if hist.empty:
             return 1.0, 20.0
         vix_close = float(hist["Close"].iloc[-1])
@@ -86,7 +89,7 @@ def get_vix_multiplier() -> tuple[float, float]:
         if vix_close > 25.0:
             return 0.50, vix_close
         return 1.0, vix_close
-    except (ValueError, TypeError, KeyError, IndexError, OSError) as exc:
+    except _SOFT_FAIL as exc:
         print(f"Warning: Could not fetch VIX: {exc}")
         return 1.0, 20.0
 
@@ -95,11 +98,11 @@ def load_benchmark_state() -> BenchmarkState:
     """XIU 3-month return and 200-day regime with 3-day whipsaw hysteresis."""
     empty = BenchmarkState(roc63=0.0, is_bear=False, close=0.0, sma200=0.0)
     try:
-        bench_df = yf.Ticker(BENCHMARK_TICKER).history(period="18mo", interval="1d")
+        bench_df = fetch_benchmark_history(period="18mo")
         if bench_df.empty or len(bench_df) < 200:
             return empty
         return regime_from_benchmark_frame(add_technical_indicators(bench_df))
-    except (ValueError, TypeError, KeyError, IndexError, OSError) as exc:
+    except _SOFT_FAIL as exc:
         print(f"Warning: Could not fetch benchmark: {exc}")
         return empty
 
@@ -107,11 +110,11 @@ def load_benchmark_state() -> BenchmarkState:
 def load_inverse_quote(inverse_ticker: str) -> float | None:
     """Latest close of a BetaPro inverse ETF."""
     try:
-        inv_df = yf.Ticker(inverse_ticker).history(period="1mo", interval="1d")
+        inv_df = fetch_inverse_history(inverse_ticker, period="1mo")
         if inv_df.empty:
             return None
         close = float(inv_df["Close"].iloc[-1])
         return close if close > 0 else None
-    except (ValueError, TypeError, KeyError, IndexError, OSError) as exc:
+    except _SOFT_FAIL as exc:
         print(f"Warning: Could not fetch {inverse_ticker}: {exc}")
         return None

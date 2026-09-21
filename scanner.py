@@ -6,10 +6,8 @@ from __future__ import annotations
 import sqlite3
 import time
 from datetime import datetime, timezone
-from typing import Callable, TypeVar
 
 import pandas as pd
-import yfinance as yf
 from yfinance.exceptions import YFRateLimitError
 
 from cards import DashboardCard, daily_change_pct, dashboard_card, skipped_dashboard_card
@@ -40,6 +38,11 @@ from indicators import (
     add_technical_indicators,
     evaluate_setup_flags,
     snapshot_from_bar,
+)
+from market_data import (
+    RATE_LIMIT_BACKOFFS,
+    call_ticker,
+    fetch_history,
 )
 from regime import get_vix_multiplier, load_benchmark_state, load_inverse_quote
 from sentiment import (
@@ -72,33 +75,7 @@ from universe import (
     ticker_sector,
 )
 
-T = TypeVar("T")
 TICKER_PAUSE_SEC = 0.8
-RATE_LIMIT_BACKOFFS = (5.0, 15.0, 30.0)
-
-
-def _with_yahoo_retries(label: str, fn: Callable[[], T]) -> T:
-    """Retry Yahoo calls when rate-limited; re-raise after final backoff."""
-    last_exc: YFRateLimitError | None = None
-    for attempt, wait_sec in enumerate(RATE_LIMIT_BACKOFFS, start=1):
-        try:
-            return fn()
-        except YFRateLimitError as exc:
-            last_exc = exc
-            print(
-                f" -> [RATE LIMIT] {label}: attempt {attempt}/"
-                f"{len(RATE_LIMIT_BACKOFFS)}; sleeping {wait_sec:.0f}s"
-            )
-            time.sleep(wait_sec)
-    assert last_exc is not None
-    raise last_exc
-
-
-def _fetch_history(ticker: str, period: str = "18mo") -> pd.DataFrame:
-    return _with_yahoo_retries(
-        ticker,
-        lambda: yf.Ticker(ticker).history(period=period, interval="1d"),
-    )
 
 
 def _position_as_dict(pos: ActivePosition) -> dict:
@@ -128,7 +105,7 @@ def _confirm_pending_opens(conn: sqlite3.Connection) -> None:
     for pos in pending:
         ticker = pos.ticker
         try:
-            df = _fetch_history(ticker, period="10d")
+            df = fetch_history(ticker, period="10d")
             if df.empty or "Open" not in df.columns:
                 print(f" -> [FILL SKIP] {ticker}: no open print available yet.")
                 continue
@@ -203,7 +180,7 @@ def _manage_open_positions(
     for pos in positions:
         ticker = pos.ticker
         try:
-            df = _fetch_history(ticker, period="6mo")
+            df = fetch_history(ticker, period="6mo")
             if df.empty or len(df) < 50:
                 print(f" -> [EXIT SKIP] {ticker}: insufficient history for exit gates.")
                 continue
@@ -211,10 +188,10 @@ def _manage_open_positions(
             is_inverse = ticker in inverse_vehicles
             days_earn: int | None = None
             if not is_inverse:
-                ticker_obj = yf.Ticker(ticker)
-                days_earn = _with_yahoo_retries(
+                days_earn = call_ticker(
                     f"{ticker} earnings horizon",
-                    lambda t=ticker_obj: days_to_next_earnings(t),
+                    ticker,
+                    days_to_next_earnings,
                 )
             signal, updated = evaluate_institutional_exit(
                 _position_as_dict(pos),
@@ -681,7 +658,7 @@ def scan_market() -> None:
         for ticker in TSX_WATCHLIST:
             try:
                 # 1. Price history first (1 Yahoo call per ticker).
-                df = _fetch_history(ticker)
+                df = fetch_history(ticker)
                 if df.empty:
                     reason = "No price history from Yahoo."
                     print(f" -> [SKIP] {ticker}: {reason}")
@@ -719,14 +696,15 @@ def scan_market() -> None:
 
                 # 4. Inverted funnel: fundamentals/news only if technicals arm.
                 if tech.needs_deep_scan:
-                    ticker_obj = yf.Ticker(ticker)
-                    fund = _with_yahoo_retries(
+                    fund = call_ticker(
                         f"{ticker} fundamentals",
-                        lambda t=ticker_obj: evaluate_fundamentals(t),
+                        ticker,
+                        evaluate_fundamentals,
                     )
-                    news = _with_yahoo_retries(
+                    news = call_ticker(
                         f"{ticker} news",
-                        lambda t=ticker_obj: evaluate_news_velocity(t),
+                        ticker,
+                        evaluate_news_velocity,
                     )
                 else:
                     fund = dummy_fund
