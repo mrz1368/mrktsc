@@ -249,6 +249,7 @@ def _manage_open_positions(
                             message=signal.reason,
                             cash_etf=CASH_ETF,
                         ),
+                        context=f"exit {ticker}",
                     )
                     close_active_position(conn, ticker)
                     print(f" -> [EXIT] {ticker}: scale emptied book @ ${signal.exit_price:.2f}")
@@ -275,6 +276,7 @@ def _manage_open_positions(
                             message=signal.reason,
                             cash_etf=CASH_ETF,
                         ),
+                        context=f"scale {ticker}",
                     )
                     print(
                         f" -> [SCALE] {ticker}: sold {signal.shares_to_sell} @ "
@@ -296,6 +298,7 @@ def _manage_open_positions(
                         message=signal.reason,
                         cash_etf=CASH_ETF,
                     ),
+                    context=f"exit {ticker}",
                 )
                 close_active_position(conn, ticker)
                 print(
@@ -439,6 +442,7 @@ def _try_dispatch_buy(
         cfg.telegram_bot_token,
         cfg.telegram_chat_id,
         format_setup_html(size, ctx),
+        context=f"setup {ticker}",
     )
     open_active_position(conn, ticker=ticker, size=size, sector=sector)
     alerted_sectors.add(sector)
@@ -515,6 +519,7 @@ def _try_dispatch_inverse(
         cfg.telegram_bot_token,
         cfg.telegram_chat_id,
         format_inverse_html(size, ctx, inverse_ticker=inverse_ticker),
+        context=f"inverse {inverse_ticker} via {ticker}",
     )
     open_active_position(conn, ticker=inverse_ticker, size=size, sector=sector)
     alerted_sectors.add(sector)
@@ -582,6 +587,7 @@ def _try_dispatch_watch(
             current_price=bar.close,
             fund_score=40.0 if fund.passes_fundamentals else 0.0,
         ),
+        context=f"watch {ticker}",
     )
     print(f" -> [WATCHLIST RADAR] {ticker} sent to Telegram.")
 
@@ -832,6 +838,7 @@ def scan_market() -> None:
                     vix_mult=vix_mult,
                     is_bear=market_regime == "BEAR",
                 ),
+                context="idle cash",
             )
             print(f" -> [IDLE CASH] No setups. Remain 100% in {CASH_ETF}.")
 

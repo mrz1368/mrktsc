@@ -369,26 +369,46 @@ def format_exit_html(
     )
 
 
-def send_html_message(token: str, chat_id: str, text: str, timeout: int = 20) -> dict:
-    url = f"{TELEGRAM_API}/bot{token}/sendMessage"
-    response = requests.post(
-        url,
-        json={
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-        },
-        timeout=timeout,
-    )
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        raise RuntimeError(
-            f"Telegram returned non-JSON ({response.status_code}): {response.text[:200]}"
-        ) from exc
+def send_html_message(
+    token: str,
+    chat_id: str,
+    text: str,
+    timeout: int = 20,
+    *,
+    context: str | None = None,
+) -> bool:
+    """Post an HTML message to Telegram.
 
-    if response.status_code != 200 or not payload.get("ok"):
-        description = payload.get("description", response.text[:200])
-        raise RuntimeError(f"Telegram sendMessage failed: {description}")
-    return payload
+    Never raises on send/network/API failure — logs and returns False so a scan
+    mid-loop is not aborted. Missing bot token/chat id still fail at load_config.
+    """
+    label = context or "unknown"
+    url = f"{TELEGRAM_API}/bot{token}/sendMessage"
+    try:
+        response = requests.post(
+            url,
+            json={
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            },
+            timeout=timeout,
+        )
+        try:
+            payload = response.json()
+        except ValueError:
+            print(
+                f" -> [TELEGRAM FAIL] {label}: non-JSON "
+                f"({response.status_code}): {response.text[:200]}"
+            )
+            return False
+
+        if response.status_code != 200 or not payload.get("ok"):
+            description = payload.get("description", response.text[:200])
+            print(f" -> [TELEGRAM FAIL] {label}: {description}")
+            return False
+        return True
+    except Exception as exc:  # noqa: BLE001 — send must never abort the scan
+        print(f" -> [TELEGRAM FAIL] {label}: {exc}")
+        return False
