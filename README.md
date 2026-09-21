@@ -39,7 +39,8 @@ SQLite cooldown prevents re-alerting the same `(ticker, alert_type)` within `COO
 
 ```text
 mrktsc/
-├── scanner.py           # Orchestrator (scan → gate → dispatch)
+├── scanner.py           # Orchestrator (screen → dispatch → dashboard)
+├── book.py              # Pending-open fills + open-position exits
 ├── indicators.py        # SMA/EMA/ATR/ADX/RVOL + setup flags
 ├── fundamentals.py      # Debt / FCF / earnings (yfinance-safe)
 ├── sentiment.py         # Fear & Greed + news velocity
@@ -156,7 +157,9 @@ VIX scales the risk budget (e.g. &lt;15 → 1.25×, &gt;25 → 0.5×).
 
 ## Data caveats
 
-Market data and fundamentals come from **yfinance**. Canadian `.TO` fundamentals are often incomplete. The fundamental engine treats missing fields as **unverified / assumed safe** and only hard-rejects on *explicit* bad readings (e.g. known coverage &lt; 2×, negative FCF). For larger capital, consider a paid fundamentals API (FMP, EODHD, etc.).
+Market data and fundamentals come from **yfinance**. Canadian `.TO` fundamentals are often incomplete. The fundamental engine treats missing fields as **unverified / assumed safe** and only hard-rejects on *explicit* bad readings (e.g. known coverage &lt; 2×, negative FCF). Telegram and dashboard cards label these as **Unverified Fundamentals** (visibility only — gate math stays fail-open). For larger capital, consider a paid fundamentals API (FMP, EODHD, etc.).
+
+**Exit marks** use the signal day's EOD close for triggers and PnL; live execution is the next session open (optimistic mark — fill may differ).
 
 ---
 

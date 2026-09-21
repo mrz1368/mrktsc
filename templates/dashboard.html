@@ -249,8 +249,13 @@
 
         <!-- Compact Risk & Catalyst Summary -->
         <div class="flex flex-wrap gap-1.5 text-[11px]">
+          {% if card.deep_scanned and not card.metadata_complete %}
+          <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-amber-500/15 text-amber-400 border border-amber-500/30">⚠️ Unverified Fundamentals</span>
+          {% endif %}
           {% if card.category == 'setup' or card.category == 'watch' %}
+          {% if card.metadata_complete %}
           <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">🛡️ Fundamentals: Verified</span>
+          {% endif %}
           <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-slate-800 text-slate-300 border border-slate-700">📰 News: Clean</span>
           {% elif card.earnings_conflict %}
           <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-rose-500/15 text-rose-400 border border-rose-500/30">⚠️ Blocked: Earnings Blackout</span>
@@ -337,6 +342,15 @@
             <li>
               <strong class="text-slate-100">Free Cash Flow (FCF > 0):</strong>
               Trailing Twelve Month (TTM) cash flow must be positive to ensure business solvency without continuous capital dilution.
+            </li>
+            <li>
+              <strong class="text-slate-100">Unverified / Fail-Open Metadata:</strong>
+              Incomplete Yahoo <code>.TO</code> fundamentals fail open (assumed safe) but surface as
+              <span class="text-amber-400">⚠️ Unverified Fundamentals</span> on Telegram and dashboard cards — visibility only, not a hard veto.
+            </li>
+            <li>
+              <strong class="text-slate-100">Exit Marks (Optimistic):</strong>
+              Exit triggers and PnL marks use the signal day's EOD close; live execution is the next session open. Fill price may differ.
             </li>
             <li>
               <strong class="text-slate-100">Earnings Blackout (-{{ thresholds.earnings_blackout_post_days }} to +{{ thresholds.earnings_blackout_ahead_days }} Days):</strong>

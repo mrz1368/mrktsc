@@ -63,11 +63,13 @@ class AlertContext:
     vix_mult: float = 1.0
     dynamic_risk_cad: float | None = None
     cash_etf: str = "CASH.TO"
+    metadata_complete: bool = True
 
 
 def _validation_icons(ctx: AlertContext, *, bearish: bool = False) -> dict[str, str]:
     slope_ok = ctx.sma50_slope < 0 if bearish else ctx.sma50_slope > 0
     rs_ok = ctx.relative_strength < 0 if bearish else ctx.relative_strength > 0
+    fund_warn = not ctx.metadata_complete
     return {
         "adx": "✅" if ctx.adx14 >= MIN_ADX else "❌",
         "rvol": "✅" if ctx.rvol >= MIN_RVOL else "❌",
@@ -76,9 +78,9 @@ def _validation_icons(ctx: AlertContext, *, bearish: bool = False) -> dict[str, 
         "candle": "✅" if ctx.candle_confirmed else "❌",
         "sentiment": "❌" if ctx.sentiment_score > EXTREME_GREED_SCORE else "✅",
         "earnings": "❌" if ctx.has_earnings_conflict else "✅",
-        "debt": "✅" if ctx.debt_safe else "❌",
-        "fcf": "✅" if ctx.fcf_positive else "❌",
-        "quality": "✅" if ctx.quality_ok else "❌",
+        "debt": ("⚠️" if fund_warn else "✅") if ctx.debt_safe else "❌",
+        "fcf": ("⚠️" if fund_warn else "✅") if ctx.fcf_positive else "❌",
+        "quality": ("⚠️" if fund_warn else "✅") if ctx.quality_ok else "❌",
         "news": "✅" if ctx.headlines_clean else "❌",
     }
 
@@ -103,13 +105,25 @@ def _bulletproof_block(ctx: AlertContext, *, bearish: bool = False) -> str:
     else:
         sentiment_extra = ""
     cov = f"{MIN_INTEREST_COVERAGE:.0f}x"
-    debt_text = (
-        f"Debt Service Safe (>{cov} Coverage)"
-        if ctx.debt_safe
-        else f"High Debt Burden (Coverage < {cov})"
-    )
-    fcf_text = "Positive TTM Free Cash Flow" if ctx.fcf_positive else "Negative Free Cash Flow"
+    if not ctx.metadata_complete and ctx.debt_safe:
+        debt_text = f"Unverified (debt/coverage not confirmed; assumed >{cov})"
+    elif ctx.debt_safe:
+        debt_text = f"Debt Service Safe (>{cov} Coverage)"
+    else:
+        debt_text = f"High Debt Burden (Coverage < {cov})"
+    if not ctx.metadata_complete and ctx.fcf_positive:
+        fcf_text = "Unverified (FCF/OCF not confirmed; assumed positive)"
+    elif ctx.fcf_positive:
+        fcf_text = "Positive TTM Free Cash Flow"
+    else:
+        fcf_text = "Negative Free Cash Flow"
     news_text = html.escape(ctx.news_notes)
+    unverified_banner = ""
+    if not ctx.metadata_complete:
+        unverified_banner = (
+            "⚠️ <b>Unverified Fundamentals</b> "
+            "<i>(debt/FCF not confirmed — Yahoo metadata incomplete; fail-open)</i>\n"
+        )
     return (
         f"<b>BULLETPROOF VALIDATION</b>\n"
         f"{icons['adx']} <b>Trend (ADX):</b> {ctx.adx14:.1f} (Escaping Chop)\n"
@@ -120,6 +134,7 @@ def _bulletproof_block(ctx: AlertContext, *, bearish: bool = False) -> str:
         f"{icons['candle']} <b>Candle Trigger:</b> {candle_label}\n"
         f"\n"
         f"<b>FUNDAMENTAL &amp; REGIME</b>\n"
+        f"{unverified_banner}"
         f"{icons['sentiment']} <b>Sentiment:</b> {ctx.sentiment_score:.0f}/100 "
         f"({sentiment_label}{sentiment_extra})\n"
         f"{icons['news']} <b>News Velocity:</b> {news_text}\n"
@@ -364,6 +379,9 @@ def format_exit_html(
         f"({sign}{pnl_pct:.1f}%) | {sign}${pnl_dollars:.2f} CAD\n"
         f"• <b>Reason:</b> {safe_message}\n"
         f"{action_line}\n"
+        f"\n"
+        f"⚠️ <i>Mark/PnL use today's EOD close; execute at tomorrow's open "
+        f"(optimistic mark — fill may differ).</i>\n"
         f"\n"
         f"⏰ <b>Generated:</b> "
         f"{datetime.now(ZoneInfo('America/Toronto')).strftime('%Y-%m-%d %H:%M')}"

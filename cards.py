@@ -47,6 +47,8 @@ class DashboardCard:
     earnings_conflict: bool
     headlines_clean: bool
     fund_notes: str
+    metadata_complete: bool = True
+    deep_scanned: bool = False
 
     def to_template_dict(self) -> dict[str, Any]:
         """Flat dict for Jinja. Keys are the template contract."""
@@ -63,6 +65,8 @@ def dashboard_card(
     news: NewsVelocityResult,
     category: str,
     extra_note: str = "",
+    *,
+    deep_scanned: bool = False,
 ) -> DashboardCard:
     notes = fund.notes
     if extra_note:
@@ -92,6 +96,8 @@ def dashboard_card(
         earnings_conflict=fund.earnings_conflict,
         headlines_clean=news.headlines_clean,
         fund_notes=notes,
+        metadata_complete=fund.metadata_complete,
+        deep_scanned=deep_scanned,
     )
 
 
@@ -123,4 +129,6 @@ def skipped_dashboard_card(
         earnings_conflict=False,
         headlines_clean=True,
         fund_notes=reason,
+        metadata_complete=False,
+        deep_scanned=False,
     )

@@ -84,6 +84,7 @@ def _build_alert_context(
         vix_mult=vix_mult,
         dynamic_risk_cad=dynamic_risk_cad,
         cash_etf=CASH_ETF,
+        metadata_complete=fund.metadata_complete,
     )
 
 
