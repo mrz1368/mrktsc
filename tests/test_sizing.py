@@ -12,6 +12,7 @@ from sizing import (
     TARGET_1_R,
     size_inverse_from_underlying,
     size_position,
+    stops_after_pending_fill,
     tranche_one_shares,
 )
 
@@ -60,6 +61,39 @@ def test_invalid_inputs_return_none() -> None:
     assert size_position(0.0, 2.0, 100.0) is None
     assert size_position(100.0, 0.0, 100.0) is None
     assert size_position(100.0, 2.0, 0.0) is None
+
+
+def test_stops_after_pending_fill_preserves_r_distance() -> None:
+    # Signal entry 100, stop 97 → R = 3; fill at 102 → stop 99.
+    initial, current = stops_after_pending_fill(
+        fill_price=102.0,
+        old_entry=100.0,
+        old_initial_stop=97.0,
+    )
+    assert initial == pytest.approx(99.0)
+    assert current == pytest.approx(99.0)
+    assert initial == current
+
+
+def test_stops_after_pending_fill_gap_down() -> None:
+    initial, current = stops_after_pending_fill(
+        fill_price=98.0,
+        old_entry=100.0,
+        old_initial_stop=97.0,
+    )
+    assert initial == pytest.approx(95.0)
+    assert current == pytest.approx(95.0)
+
+
+def test_stops_after_pending_fill_clamps_negative_r() -> None:
+    # Stop already above entry → R clamped to 0; stop equals fill.
+    initial, current = stops_after_pending_fill(
+        fill_price=105.0,
+        old_entry=100.0,
+        old_initial_stop=101.0,
+    )
+    assert initial == pytest.approx(105.0)
+    assert current == pytest.approx(105.0)
 
 
 def test_inverse_atr_scales_underlying_risk_by_leverage() -> None:

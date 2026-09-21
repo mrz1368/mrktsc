@@ -51,7 +51,13 @@ from sentiment import (
     evaluate_news_velocity,
     get_macro_sentiment,
 )
-from sizing import PositionSize, evaluate_heat_veto, size_inverse_from_underlying, size_position
+from sizing import (
+    PositionSize,
+    evaluate_heat_veto,
+    size_inverse_from_underlying,
+    size_position,
+    stops_after_pending_fill,
+)
 from telegram_notify import (
     AlertContext,
     format_exit_html,
@@ -132,10 +138,17 @@ def _confirm_pending_opens(conn: sqlite3.Connection) -> None:
                 )
                 continue
 
+            new_initial_stop, new_current_stop = stops_after_pending_fill(
+                fill_price=fill_price,
+                old_entry=pos.entry_price,
+                old_initial_stop=pos.initial_stop,
+            )
             confirmed = confirm_pending_position(
                 conn,
                 ticker=ticker,
                 fill_price=fill_price,
+                initial_stop=new_initial_stop,
+                current_stop=new_current_stop,
                 fill_date=fill_date,
             )
             if confirmed is None:

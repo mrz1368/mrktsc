@@ -342,9 +342,11 @@ def confirm_pending_position(
     *,
     ticker: str,
     fill_price: float,
+    initial_stop: float,
+    current_stop: float,
     fill_date: str | None = None,
 ) -> ActivePosition | None:
-    """Promote PENDING_OPEN to OPEN using next-session open as cost basis."""
+    """Promote PENDING_OPEN to OPEN, persisting caller-supplied fill/stops."""
     row = conn.execute(
         """
         SELECT ticker, entry_date, entry_price, initial_stop, current_stop,
@@ -374,10 +376,6 @@ def confirm_pending_position(
         )
 
     signal_price = float(row["signal_price"] or row["entry_price"])
-    old_entry = float(row["entry_price"])
-    old_stop = float(row["initial_stop"])
-    r_distance = max(old_entry - old_stop, 0.0)
-    new_stop = fill_price - r_distance
     moment = fill_date or datetime.now(timezone.utc).strftime(ISO_FORMAT)
 
     conn.execute(
@@ -390,8 +388,8 @@ def confirm_pending_position(
         (
             moment,
             fill_price,
-            new_stop,
-            new_stop,
+            initial_stop,
+            current_stop,
             STATUS_OPEN,
             signal_price,
             ticker,

@@ -28,6 +28,22 @@ def tranche_one_shares(total_shares: int) -> int:
     return max(1, math.ceil(total_shares * SCALE_OUT_FRACTION))
 
 
+def stops_after_pending_fill(
+    *,
+    fill_price: float,
+    old_entry: float,
+    old_initial_stop: float,
+) -> tuple[float, float]:
+    """Preserve signal R-distance when confirming a fill at next open.
+
+    Returns ``(new_initial_stop, new_current_stop)`` — both equal to
+    ``fill_price - max(old_entry - old_initial_stop, 0)``.
+    """
+    r_distance = max(old_entry - old_initial_stop, 0.0)
+    new_stop = fill_price - r_distance
+    return new_stop, new_stop
+
+
 def portfolio_heat_r(
     positions: Iterable[HeatPosition],
     unit_risk_cad: float,
